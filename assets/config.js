@@ -1,6 +1,6 @@
 // Site settings. Yahan koi secret / API key NAHI daalni (ye file browser mein public hoti hai).
 window.SITE = {
-  BRAND: "Vault OTT",                 // TODO: final brand naam
+  BRAND: "Vault Store",                 // final brand naam
   TAGLINE: "OTT & digital subscriptions, plan-based",
   BOT_USERNAME: "",                   // TODO: Telegram bot username (bina @ ke)
   SUPPORT_URL: "",                    // TODO: support link, jaise https://t.me/yourhandle

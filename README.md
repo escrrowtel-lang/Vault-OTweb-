@@ -1,4 +1,4 @@
-# Vault OTT – website
+# Vault Store – website
 
 Plain static site (HTML + CSS + JS), koi build step nahi. Kisi bhi static host par chalti hai (Netlify, Vercel, GitHub Pages).
 
