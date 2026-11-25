@@ -57,15 +57,13 @@
   ] };
 
   function loadCatalog() {
-    if (!S.API_BASE) {
-      return Promise.resolve(S.DEMO_WHEN_NO_API ? DEMO : { categories: [], error: "API_BASE set nahi hai" });
-    }
-    return fetch(S.API_BASE.replace(/\/$/, "") + S.CATALOG_PATH, { headers: { Accept: "application/json" } })
+    var url = (S.API_BASE || "").replace(/\/$/, "") + S.CATALOG_PATH;
+    return fetch(url, { headers: { Accept: "application/json" } })
       .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
       .then(function (d) { try { sessionStorage.setItem("catalog", JSON.stringify(d)); } catch (e) {} return d; })
       .catch(function () {
         try { var c = sessionStorage.getItem("catalog"); if (c) { var d = JSON.parse(c); d.stale = true; return d; } } catch (e) {}
-        return { categories: [], error: "Catalog abhi load nahi ho paaya." };
+        return S.DEMO_ON_ERROR ? DEMO : { categories: [], error: "Catalog abhi load nahi ho paaya." };
       });
   }
 
@@ -94,7 +92,7 @@
   }
   function notice(d) {
     var n = "";
-    if (d.demo) n = "Ye sirf DEMO data hai (layout dekhne ke liye). <code>assets/config.js</code> mein API_BASE set karo.";
+    if (d.demo) n = "Ye sirf DEMO data hai: backend se catalog nahi mila. Server par <code>/app/</code> proxy check karo.";
     else if (d.stale) n = "Live catalog abhi nahi mil raha; purana saved data dikh raha hai.";
     return n ? '<div class="notice">' + n + "</div>" : "";
   }
@@ -145,7 +143,7 @@
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     var refresh = function () { loadCatalog().then(function (d) { state.data = d; render(); }); };
     refresh();
-    if (S.API_BASE) setInterval(refresh, S.REFRESH_MS);
+    setInterval(refresh, S.REFRESH_MS);
     $("#tabs").addEventListener("click", function (e) {
       var t = e.target.closest("[data-c]"); if (!t) return; state.cat = t.dataset.c; render();
     });

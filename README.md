@@ -23,3 +23,11 @@ phir `http://localhost:8080` kholo.
 
 ## Design
 Safed (plain white) base, alag-alag colours sirf accents mein (category chips, card top-line, buttons).
+
+## VPS par deploy (bina domain, IP par)
+```
+git clone https://github.com/escrrowtel-lang/Vault-OTweb-.git
+cd Vault-OTweb-
+sudo bash deploy/install.sh https://<backend-url>     # backend ke bina: sudo bash deploy/install.sh
+```
+Update: `sudo bash deploy/update.sh https://<backend-url>`. Domain aane par `server_name` badlo aur `certbot --nginx` se HTTPS lagao.
