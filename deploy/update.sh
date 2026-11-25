@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Naya code laane ke liye: sudo bash deploy/update.sh https://<backend-url>
+# Naya code laao aur restart karo:  sudo bash deploy/update.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 git pull --ff-only
-bash deploy/install.sh "${1:-}"
+bash deploy/install.sh

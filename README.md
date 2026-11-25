@@ -1,33 +1,43 @@
-# Vault Store – website
+# Vault Store
 
-Plain static site (HTML + CSS + JS), koi build step nahi. Kisi bhi static host par chalti hai (Netlify, Vercel, GitHub Pages).
+Apna standalone OTT/digital subscription store: website + wallet + inventory + admin panel. Telegram ki zaroorat nahi.
+Sirf Python 3 chahiye (koi pip package nahi), database SQLite.
 
-## Chalane ke liye
+## Kya kya hai
+- **Customer:** signup/login, catalog, plan kharidna (wallet se), orders + delivery, wallet top-up, referral
+- **Inventory:** auto delivery (admin account details upload karta hai, har item sirf ek baar bikta hai), manual delivery, pre-order (stock aate hi auto deliver)
+- **Payments (wallet top-up):** UPI (UTR, admin approve), Binance ID (admin approve), USDT BEP20 (blockchain se auto-verify, unique amount + ek hash sirf ek baar)
+- **Admin panel (`/admin.html`):** deposits approve/reject, orders deliver/refund, category/product/plan/inventory, users, coupons, settings
+- **Nahi bana (baad mein):** Binance Pay checkout, UPI auto-mail verification, email verification/password reset, HTTPS (domain chahiye)
+
+## Local par chalao
 ```
-python3 -m http.server 8080
+python3 server/manage.py create-admin you@example.com
+python3 server/manage.py seed-demo          # sirf layout dekhne ke liye DEMO data
+python3 server/app.py                       # http://127.0.0.1:8000
+python3 -m unittest discover -s tests       # tests
 ```
-phir `http://localhost:8080` kholo.
 
-## Setup (`assets/config.js`)
-- `BRAND` – final brand naam
-- `API_BASE` – backend URL jahan `GET /app/catalog` chalta hai (CORS allow hona chahiye)
-- `BOT_USERNAME`, `SUPPORT_URL` – Telegram links
-
-`API_BASE` khaali ho to sirf layout dekhne ke liye DEMO data dikhta hai (banner ke saath). Asli deploy se pehle API_BASE zaroor set karo.
-
-## Rules
-- Frontend mein koi API key, token ya secret nahi.
-- Reseller API (`/api/v1/*`) site par use nahi hoti.
-- Koi asli company ka logo ya domain nahi. Fake reviews, fake stock ya fake urgency nahi.
-- `refund-policy`, `terms`, `privacy` pages DRAFT hain, `[TODO]` jagah asli text bharo.
-
-## Design
-Safed (plain white) base, alag-alag colours sirf accents mein (category chips, card top-line, buttons).
-
-## VPS par deploy (bina domain, IP par)
+## VPS par (Ubuntu/Debian)
+Pehli baar:
 ```
 git clone https://github.com/escrrowtel-lang/Vault-OTweb-.git
 cd Vault-OTweb-
-sudo bash deploy/install.sh https://<backend-url>     # backend ke bina: sudo bash deploy/install.sh
+sudo bash deploy/install.sh
+sudo bash deploy/admin.sh create-admin aapka@email.com
 ```
-Update: `sudo bash deploy/update.sh https://<backend-url>`. Domain aane par `server_name` badlo aur `certbot --nginx` se HTTPS lagao.
+Update / restart:
+```
+cd ~/Vault-OTweb- && sudo bash deploy/update.sh
+sudo systemctl restart vault-store      # sirf server restart
+sudo journalctl -u vault-store -n 50 --no-pager   # log
+```
+Data `/var/lib/vault-store` mein hai (backup yahin se lo).
+
+## Payment settings
+Admin panel > Settings mein UPI ID, Binance ID, USDT wallet address, confirmations aur min/max deposit bharo. Koi secret/API key code mein nahi hai.
+
+## Security notes
+- Passwords scrypt se hash, session cookie HttpOnly, har POST par custom header (CSRF), login/signup rate-limit.
+- **Domain na ho to site sirf HTTP par hai: password aur cookie encrypted nahi.** Jaldi domain lekar `certbot --nginx` se HTTPS lagao. Tab tak koi aisa password mat rakho jo kahin aur use hota ho.
+- Koi asli company ka logo nahi. Icons original "app tile" style mein hain; chaaho to admin se har product ki apni image upload karo.
