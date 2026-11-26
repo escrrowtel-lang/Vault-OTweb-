@@ -16,6 +16,7 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
+import mailer
 import store
 from db import ApiError, connect, tx, to_cents, get_settings
 
@@ -119,6 +120,31 @@ def api_login(r):
     token, u = store.login(r.conn, email, pw)
     r.set_cookie = token
     return {"user": _user_json(u)}
+
+
+@route("POST", "/api/auth/forgot", "pub")
+def api_forgot(r):
+    if limited(("forgot", r.ip), 5, 3600):
+        raise ApiError(429, "Bahut zyada koshish, baad mein try karo")
+    (email,) = r.need("email")
+    u = r.conn.execute("SELECT id,email,blocked FROM users WHERE email=?", (str(email).strip().lower(),)).fetchone()
+    base = get_settings(r.conn).get("site_url", "").rstrip("/")
+    if u and not u["blocked"] and base.startswith(("http://", "https://")) and mailer.configured():
+        token = store.make_reset_token(r.conn, u["id"])
+        mailer.send_async(u["email"], "Password reset",
+                          "Password reset karne ke liye ye link kholo (1 ghante tak chalega):\n\n%s/reset.html?token=%s\n\n"
+                          "Agar aapne ye request nahi ki to is mail ko ignore karo." % (base, token))
+    # email registered hai ya nahi, ye kabhi nahi batate
+    return {"ok": True}
+
+
+@route("POST", "/api/auth/reset", "pub")
+def api_reset(r):
+    if limited(("reset", r.ip), 10, 3600):
+        raise ApiError(429, "Bahut zyada koshish, baad mein try karo")
+    token, pw = r.need("token", "password")
+    store.reset_password(r.conn, str(token), str(pw))
+    return {"ok": True}
 
 
 @route("POST", "/api/auth/logout", "pub")
@@ -354,6 +380,7 @@ def adm_orders(r):
 def adm_deliver(r):
     oid, text = r.need("id", "text")
     store.deliver_manual(r.conn, _int(oid), text)
+    store.audit(r.conn, r.user["id"], "order_deliver", "order #%s" % _int(oid))
     return {"ok": True}
 
 
@@ -361,6 +388,7 @@ def adm_deliver(r):
 def adm_refund(r):
     (oid,) = r.need("id")
     store.refund_order(r.conn, _int(oid))
+    store.audit(r.conn, r.user["id"], "order_refund", "order #%s" % _int(oid))
     return {"ok": True}
 
 
@@ -381,6 +409,7 @@ def adm_deposits(r):
 def adm_decide(r):
     did, action = r.need("id", "action")
     store.decide_deposit(r.conn, _int(did), action, r.body.get("note", ""))
+    store.audit(r.conn, r.user["id"], "deposit_" + str(action)[:10], "deposit #%s" % _int(did))
     return {"ok": True}
 
 
@@ -406,7 +435,25 @@ def adm_adjust(r):
         if not r.conn.execute("SELECT 1 FROM users WHERE id=?", (_int(uid),)).fetchone():
             raise ApiError(404, "User nahi mila")
         store.credit(r.conn, _int(uid), cents, reason)
+        store.audit(r.conn, r.user["id"], "balance_adjust", "user #%s %+.2f USD (%s)" % (_int(uid), cents / 100, reason))
     return {"ok": True}
+
+
+@route("POST", "/api/admin/user/reset-link", "admin")
+def adm_reset_link(r):
+    (uid,) = r.need("id")
+    u = r.conn.execute("SELECT id,email FROM users WHERE id=?", (_int(uid),)).fetchone()
+    if not u:
+        raise ApiError(404, "User nahi mila")
+    token = store.make_reset_token(r.conn, u["id"])
+    store.audit(r.conn, r.user["id"], "reset_link", u["email"])
+    return {"path": "/reset.html?token=" + token, "email": u["email"], "valid_minutes": store.RESET_TTL // 60}
+
+
+@route("GET", "/api/admin/audit", "admin")
+def adm_audit(r):
+    rows = r.conn.execute("SELECT a.id,a.action,a.detail,a.created_at,u.email AS admin FROM audit a LEFT JOIN users u ON u.id=a.admin_id ORDER BY a.id DESC LIMIT 200").fetchall()
+    return {"audit": [dict(x) for x in rows]}
 
 
 @route("POST", "/api/admin/user/block", "admin")
@@ -417,6 +464,7 @@ def adm_block(r):
     r.conn.execute("UPDATE users SET blocked=? WHERE id=?", (_b(blocked), _int(uid)))
     if _b(blocked):
         r.conn.execute("DELETE FROM sessions WHERE user_id=?", (_int(uid),))
+    store.audit(r.conn, r.user["id"], "user_block" if _b(blocked) else "user_unblock", "user #%s" % _int(uid))
     return {"ok": True}
 
 
@@ -462,9 +510,12 @@ def adm_settings_set(r):
                     raise ApiError(400, "USDT address sahi nahi hai")
                 if k == "methods_enabled":
                     v = ",".join(x for x in v.split(",") if x in ("upi", "binance_id", "usdt_bep20"))
+                if k == "site_url" and v and not re.match(r"^https?://[^\s/]+$", v.rstrip("/")):
+                    raise ApiError(400, "Site URL aisa ho: https://example.com")
                 if k in ("bsc_rpc", "support_url") and v and not v.startswith("https://"):
                     raise ApiError(400, "%s https:// se shuru hona chahiye" % k)
                 r.conn.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, v))
+        store.audit(r.conn, r.user["id"], "settings_update", ",".join(k for k in r.body if k in allowed))
     return {"ok": True}
 
 

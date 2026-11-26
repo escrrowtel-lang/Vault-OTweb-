@@ -141,6 +141,18 @@ CREATE TABLE IF NOT EXISTS ledger(
 );
 CREATE INDEX IF NOT EXISTS led_user ON ledger(user_id, id);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS password_resets(
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id INTEGER,
+  action TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
 """
 
 # Dollar wali values decimal string mein (admin ke liye aasaan)
@@ -160,6 +172,7 @@ DEFAULT_SETTINGS = {
     "referral_reward": "0.10",
     "support_text": "",
     "support_url": "",
+    "site_url": "",
 }
 
 

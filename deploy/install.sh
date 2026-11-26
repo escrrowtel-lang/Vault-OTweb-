@@ -33,6 +33,8 @@ Environment=HOST=127.0.0.1
 Environment=PORT=8000
 Environment=VAULT_DB=$DATA/store.db
 Environment=VAULT_UPLOADS=$DATA/uploads
+# Optional: SMTP (password reset email) /etc/vault-store.env mein: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+EnvironmentFile=-/etc/vault-store.env
 ExecStart=/usr/bin/python3 -I $APP/server/app.py
 Restart=always
 RestartSec=2
@@ -78,6 +80,10 @@ CONF
 
 ln -sf /etc/nginx/sites-available/vault-store /etc/nginx/sites-enabled/vault-store
 rm -f /etc/nginx/sites-enabled/default
+
+install -m 750 "$SRC/deploy/backup.sh" /usr/local/sbin/vault-backup.sh
+echo "30 3 * * * root /usr/local/sbin/vault-backup.sh >/dev/null 2>&1" > /etc/cron.d/vault-store-backup
+chmod 644 /etc/cron.d/vault-store-backup
 
 systemctl daemon-reload
 systemctl enable vault-store >/dev/null

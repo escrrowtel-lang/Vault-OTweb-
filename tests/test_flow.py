@@ -206,7 +206,7 @@ class Http(unittest.TestCase):
         # admin flow
         store.create_user(conn, "boss@example.com", "password123", is_admin=1)
         admin = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
-        self.assertEqual(self.call("POST", "/api/auth/login", {"email": "boss@example.com", "password": "password123"}, opener=admin)[0], 200)
+        self.assertEqual(self.call("POST", "/api/auth/login", {"email": "resetadmin@example.com", "password": "password123"}, opener=admin)[0], 200)
         c = lambda p, b: self.call("POST", p, b, opener=admin)
         self.assertEqual(c("/api/admin/category", {"name": "Streaming", "emoji": "🎬"})[0], 200)
         cid = self.call("GET", "/api/admin/catalog", opener=admin)[1]["categories"][-1]["id"]
@@ -236,6 +236,58 @@ class Http(unittest.TestCase):
         # path traversal
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(self.base + "/%2e%2e/server/db.py")
+
+    def test_forgot_no_enumeration_and_admin_reset_link(self):
+        def op():
+            return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(CookieJar()))
+        victim = mk("victim@example.com")
+        mk("resetadmin@example.com", is_admin=1)
+        anon = op()
+        a = self.call("POST", "/api/auth/forgot", {"email": "nobody@example.com"}, opener=anon)
+        b = self.call("POST", "/api/auth/forgot", {"email": "victim@example.com"}, opener=op())
+        self.assertEqual((a[0], a[1]), (b[0], b[1]))          # registered ho ya nahi, same jawab
+        self.assertEqual(self.call("POST", "/api/auth/reset", {"token": "bogus", "password": "whatever123"}, opener=anon)[0], 400)
+        admin = op()
+        self.assertEqual(self.call("POST", "/api/auth/login", {"email": "resetadmin@example.com", "password": "password123"}, opener=admin)[0], 200)
+        s, out = self.call("POST", "/api/admin/user/reset-link", {"id": victim}, opener=admin)
+        self.assertEqual(s, 200)
+        tok = out["path"].split("token=")[1]
+        self.assertEqual(self.call("POST", "/api/auth/reset", {"token": tok, "password": "newer-pass-123"}, opener=anon)[0], 200)
+        self.assertEqual(self.call("POST", "/api/auth/reset", {"token": tok, "password": "newer-pass-456"}, opener=anon)[0], 400)
+        # normal (anonymous) user reset-link nahi bana sakta
+        self.assertIn(self.call("POST", "/api/admin/user/reset-link", {"id": victim}, opener=op())[0], (401, 403))
+        self.assertTrue(self.call("GET", "/api/admin/audit", opener=admin)[1]["audit"])
+
+
+class Reset(unittest.TestCase):
+    def test_reset_token_single_use_and_logs_out(self):
+        uid = mk("reset@example.com")
+        old_token, _ = store.login(conn, "reset@example.com", "password123")
+        tok = store.make_reset_token(conn, uid)
+        with self.assertRaises(ApiError):
+            store.reset_password(conn, tok, "short")          # chhota password
+        store.reset_password(conn, tok, "brandnew-pass-1")
+        with self.assertRaises(ApiError):
+            store.reset_password(conn, tok, "another-pass-2")  # token dobara nahi chalta
+        with self.assertRaises(ApiError):
+            store.login(conn, "reset@example.com", "password123")
+        store.login(conn, "reset@example.com", "brandnew-pass-1")
+        self.assertIsNone(store.user_by_token(conn, old_token))  # purane session band
+
+    def test_reset_token_expires_and_new_replaces_old(self):
+        uid = mk("reset2@example.com")
+        t1 = store.make_reset_token(conn, uid)
+        t2 = store.make_reset_token(conn, uid)
+        with self.assertRaises(ApiError):
+            store.reset_password(conn, t1, "brandnew-pass-1")  # naya token aate hi purana bekaar
+        conn.execute("UPDATE password_resets SET expires_at=1")
+        with self.assertRaises(ApiError):
+            store.reset_password(conn, t2, "brandnew-pass-1")
+
+    def test_audit_written(self):
+        store.audit(conn, None, "x" * 100, "y" * 500)
+        row = conn.execute("SELECT action,detail FROM audit ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual((len(row["action"]), len(row["detail"])), (40, 300))
 
 
 if __name__ == "__main__":

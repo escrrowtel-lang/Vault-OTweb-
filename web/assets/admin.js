@@ -2,7 +2,7 @@
 (function () {
   var C = window.Core, $ = C.$, esc = C.esc, money = C.money;
   var root = $("#adm");
-  var TABS = [["dash", "Dashboard"], ["deposits", "Deposits"], ["orders", "Orders"], ["catalog", "Catalog & inventory"], ["users", "Users"], ["coupons", "Coupons"], ["settings", "Settings"]];
+  var TABS = [["dash", "Dashboard"], ["deposits", "Deposits"], ["orders", "Orders"], ["catalog", "Catalog & inventory"], ["users", "Users"], ["coupons", "Coupons"], ["audit", "Activity"], ["settings", "Settings"]];
   var dt = function (ts) { return ts ? new Date(ts * 1000).toLocaleString() : ""; };
   var ok = function (m) { C.toast(m || "Saved"); };
   var P = function (path, body) { return C.api("POST", path, body); };
@@ -163,14 +163,24 @@
     return C.api("GET", "/api/admin/users").then(function (d) {
       el.innerHTML = '<div class="tbl card"><table><tr><th>#</th><th>Email</th><th>Balance</th><th>Joined</th><th></th></tr>' + d.users.map(function (u) {
         return "<tr><td>" + u.id + "</td><td>" + esc(u.email) + (u.is_admin ? ' <span class="badge b-pre">admin</span>' : "") + (u.blocked ? ' <span class="badge b-out">blocked</span>' : "") + "</td><td>" + money(u.balance) + "</td><td>" + dt(u.created_at) +
-          '</td><td><button class="btn btn-ghost btn-sm" data-a="adj" data-id="' + u.id + '">Balance adjust</button> <button class="btn btn-ghost btn-sm" data-a="blk" data-id="' + u.id + '" data-b="' + (u.blocked ? 0 : 1) + '">' + (u.blocked ? "Unblock" : "Block") + "</button></td></tr>";
+          '</td><td><button class="btn btn-ghost btn-sm" data-a="adj" data-id="' + u.id + '">Balance adjust</button> <button class="btn btn-ghost btn-sm" data-a="rst" data-id="' + u.id + '">Reset link</button> <button class="btn btn-ghost btn-sm" data-a="blk" data-id="' + u.id + '" data-b="' + (u.blocked ? 0 : 1) + '">' + (u.blocked ? "Unblock" : "Block") + "</button></td></tr>";
       }).join("") + "</table></div>";
       el.onclick = function (e) {
         var b = e.target.closest("[data-a]"); if (!b) return;
         var id = parseInt(b.dataset.id, 10);
         if (b.dataset.a === "adj") C.formModal("Balance adjust", [{ k: "amount", label: "Amount USD (+ add, − kam)", type: "number", step: "0.01" }, { k: "reason", label: "Reason", def: "adjust" }], {}, function (v) { return P("/api/admin/user/adjust", { id: id, amount: v.amount, reason: v.reason }).then(function () { ok(); reload(); }); });
+        else if (b.dataset.a === "rst") P("/api/admin/user/reset-link", { id: id }).then(function (d) { C.formModal("Password reset link", [{ k: "l", label: d.email + " ko ye link bhejo (" + d.valid_minutes + " min, sirf ek baar)" }], { l: location.origin + d.path }, function () { return Promise.resolve(); }); }).catch(function (x) { C.toast(x.message, true); });
         else P("/api/admin/user/block", { id: id, blocked: parseInt(b.dataset.b, 10) }).then(function () { ok(); reload(); }).catch(function (x) { C.toast(x.message, true); });
       };
+    });
+  };
+
+  /* ---------- activity log ---------- */
+  views.audit = function (el) {
+    return C.api("GET", "/api/admin/audit").then(function (d) {
+      el.innerHTML = d.audit.length ? '<div class="tbl card"><table><tr><th>Time</th><th>Admin</th><th>Action</th><th>Detail</th></tr>' + d.audit.map(function (a) {
+        return "<tr><td>" + dt(a.created_at) + "</td><td>" + esc(a.admin || "") + '</td><td class="mono">' + esc(a.action) + "</td><td>" + esc(a.detail) + "</td></tr>";
+      }).join("") + "</table></div>" : '<div class="empty">Abhi koi activity nahi.</div>';
     });
   };
 
@@ -200,7 +210,8 @@
         { k: "bsc_rpc", label: "BSC RPC URL (https://)" }, { k: "confirmations", label: "Required confirmations", type: "number" },
         { k: "min_deposit", label: "Min deposit (USD)" }, { k: "max_deposit", label: "Max deposit (USD)" },
         { k: "referral_reward", label: "Referral reward (USD)" },
-        { k: "support_text", label: "Support text (support page par dikhega)", type: "textarea", rows: 3 }, { k: "support_url", label: "Support link (https://… optional)" }];
+        { k: "support_text", label: "Support text (support page par dikhega)", type: "textarea", rows: 3 }, { k: "support_url", label: "Support link (https://… optional)" },
+        { k: "site_url", label: "Site URL (password-reset email ke link ke liye)", help: "Jaise https://yourdomain.com. SMTP server par set ho tabhi email jaayega." }];
       el.innerHTML = '<div class="card"><div class="orow"><h3>Settings</h3><button class="btn btn-primary btn-sm" id="es">Edit</button></div><div class="tbl"><table>' + F.map(function (f) { return "<tr><td>" + esc(f.label) + '</td><td class="mono wrapc">' + (esc(s[f.k]) || '<span class="muted">—</span>') + "</td></tr>"; }).join("") + "</table></div></div>";
       $("#es", el).onclick = function () { C.formModal("Settings", F, s, function (v) { return P("/api/admin/settings", v).then(function () { ok(); reload(); }); }); };
     });

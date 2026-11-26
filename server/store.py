@@ -80,6 +80,40 @@ def logout(conn, token):
         conn.execute("DELETE FROM sessions WHERE token_hash=?", (hashlib.sha256(token.encode()).hexdigest(),))
 
 
+RESET_TTL = 3600
+
+
+def audit(conn, admin_id, action, detail=""):
+    conn.execute("INSERT INTO audit(admin_id,action,detail,created_at) VALUES(?,?,?,?)",
+                 (admin_id, action[:40], str(detail)[:300], now()))
+
+
+def make_reset_token(conn, user_id):
+    token = secrets.token_urlsafe(32)
+    with tx(conn):
+        conn.execute("DELETE FROM password_resets WHERE user_id=? OR expires_at<?", (user_id, now()))
+        conn.execute("INSERT INTO password_resets(token_hash,user_id,expires_at) VALUES(?,?,?)",
+                     (hashlib.sha256(token.encode()).hexdigest(), user_id, now() + RESET_TTL))
+    return token
+
+
+def reset_password(conn, token, password):
+    if len(password or "") < 8 or len(password) > 200:
+        raise ApiError(400, "Password kam se kam 8 characters ka ho")
+    th = hashlib.sha256((token or "").encode()).hexdigest()
+    salt = secrets.token_bytes(16)
+    ph = _hash(password, salt)
+    with tx(conn):
+        row = conn.execute("SELECT user_id FROM password_resets WHERE token_hash=? AND expires_at>?", (th, now())).fetchone()
+        if not row:
+            raise ApiError(400, "Reset link galat ya expire ho gaya")
+        # token sirf ek baar chalta hai
+        conn.execute("DELETE FROM password_resets WHERE token_hash=?", (th,))
+        conn.execute("UPDATE users SET pass_hash=?, pass_salt=? WHERE id=?", (ph, salt, row["user_id"]))
+        conn.execute("DELETE FROM sessions WHERE user_id=?", (row["user_id"],))
+    return row["user_id"]
+
+
 # ---------------------------------------------------------------- wallet
 def credit(conn, user_id, delta, reason, ref=""):
     """tx ke andar hi call karo."""

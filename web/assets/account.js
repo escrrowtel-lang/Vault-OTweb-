@@ -18,7 +18,8 @@
       '<label class="fld"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>' +
       '<label class="fld"><span>Password</span><input name="password" type="password" required minlength="8" autocomplete="current-password"><small class="muted" id="pwh" hidden>Kam se kam 8 characters</small></label>' +
       (ref ? '<small class="muted">Referral code laga hai: <b>' + esc(ref) + "</b></small>" : "") +
-      '<button class="btn btn-primary" id="asub" type="submit">Login</button></form></div>';
+      '<button class="btn btn-primary" id="asub" type="submit">Login</button>' +
+      '<button class="btn btn-ghost btn-sm" id="fp" type="button">Password bhool gaye?</button></form></div>';
     var mode = "login";
     if (location.hash === "#register") setMode("register");
     function setMode(m) {
@@ -28,6 +29,13 @@
       $("#asub").textContent = m === "register" ? "Account banao" : "Login";
       $("#af").elements.password.autocomplete = m === "register" ? "new-password" : "current-password";
     }
+    $("#fp").onclick = function () {
+      C.formModal("Password reset", [{ k: "email", label: "Apna email", type: "email" }], { email: $("#af").elements.email.value }, function (v) {
+        return C.api("POST", "/api/auth/forgot", { email: v.email }).then(function () {
+          C.toast("Agar email setup hai to reset link bhej diya gaya. Warna support/admin se reset link maango.");
+        });
+      });
+    };
     $("#at").onclick = function (e) { var t = e.target.closest("[data-m]"); if (t) setMode(t.dataset.m); };
     $("#af").onsubmit = function (e) {
       e.preventDefault();
