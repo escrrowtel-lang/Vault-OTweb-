@@ -124,7 +124,7 @@
       var dest = upi ? s.upi_id : s.binance_id;
       if (!dest) { el.innerHTML = '<div class="note">Ye method abhi set nahi hai.</div>'; return; }
       el.innerHTML = '<ol class="steps"><li>Neeche amount (USD) daalo' + (upi ? " — INR amount dikhega" : "") + ".</li><li>" + (upi ? "Is UPI ID par pay karo" : "Is Binance ID par transfer karo") + ': <b class="mono">' + esc(dest) + "</b> " + (upi && s.upi_name ? "(" + esc(s.upi_name) + ")" : "") + ' <button class="btn btn-ghost btn-sm" id="cpd">Copy</button></li><li>' +
-        (upi ? "Payment ka 12-digit <b>UTR</b>" : "Binance ka <b>Transaction / Order ID</b>") + " yahan daalo. Admin verify karke wallet mein add karega.</li></ol>" +
+        (upi ? "Payment ka 12-digit <b>UTR</b>" : "Binance ka <b>Transaction / Order ID</b>") + " yahan daalo. " + ((upi ? s.upi_auto : s.binance_auto) ? "Payment verify hote hi wallet mein <b>apne aap</b> add ho jaayega (1-2 min lag sakte hain)." : "Admin verify karke wallet mein add karega.") + "</li></ol>" +
         '<form class="form" id="tf"><label class="fld"><span>Amount (USD)</span><input name="amount" type="number" step="0.01" min="' + esc(s.min_deposit) + '" max="' + esc(s.max_deposit) + '" required></label>' +
         (upi ? '<div class="note" id="inr">Pay karne ka amount: ₹—</div>' : "") +
         '<label class="fld"><span>' + (upi ? "UTR (12 digit)" : "Binance Transaction/Order ID") + '</span><input name="reference" required autocomplete="off"></label><button class="btn btn-primary" type="submit">Submit for verification</button></form>';

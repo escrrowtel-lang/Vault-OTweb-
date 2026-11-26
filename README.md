@@ -67,3 +67,20 @@ Admin panel > Settings mein UPI ID, Binance ID, USDT wallet address, confirmatio
 - Passwords scrypt se hash, session cookie HttpOnly, har POST par custom header (CSRF), login/signup rate-limit.
 - **Domain na ho to site sirf HTTP par hai: password aur cookie encrypted nahi.** Jaldi domain lekar `certbot --nginx` se HTTPS lagao. Tab tak koi aisa password mat rakho jo kahin aur use hota ho.
 - Koi asli company ka logo nahi. Icons original "app tile" style mein hain; chaaho to admin se har product ki apni image upload karo.
+
+## Automatic payment verification
+
+| Method | Kaise verify hota hai | Kya chahiye |
+|---|---|---|
+| USDT BEP20 | Blockchain (BSC RPC) se, unique amount | Admin settings mein wallet address |
+| UPI | Bank/FamPay "credited" alert **email** (IMAP) se: amount + 12-digit UTR | Mailbox + app password, bank sender email |
+| Binance ID | Binance Pay trade history API (read-only key) se incoming USDT/USDC/BUSD/FDUSD | API key (sirf Enable Reading) |
+
+Setup: `sudo bash deploy/set-autopay.sh` (secrets `/etc/vault-store.env` mein), phir admin > Settings: `upi_auto=1`,
+`upi_alert_senders=alerts@yourbank.com` (ya `@yourbank.com`), `binance_auto=1`.
+
+- User ka bataya amount kabhi nahi maana jata. UPI mein INR amount >= deposit x USD-INR rate hona chahiye, warna pending rehta hai (admin manual decide karta hai).
+- Email sirf allowlisted sender se aur DKIM pass hone par maani jaati hai (`upi_require_dkim`).
+- Har UTR / Binance transaction ek hi baar credit hota hai. Email submit se pehle aaye ya baad mein, dono chalta hai (poll har 30 sec).
+- Alert parser generic hai (Rs/INR/₹ amount + "credited" + UTR/Ref/RRN). Admin API `POST /api/admin/autopay/test-parse` {"text": "..."} se apne bank ki email ka sample check karo.
+- Binance sirf stablecoin (USDT/USDC/BUSD/FDUSD) auto-credit karta hai; baaki coin admin manual approve karta hai.

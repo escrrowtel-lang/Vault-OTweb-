@@ -151,11 +151,15 @@ footer a:hover{color:var(--ink)}
 }
 
 /* ===== app icon tile ===== */
-.tile{display:inline-grid;place-items:center;flex:none;border-radius:23%;position:relative;overflow:hidden;
-  background:linear-gradient(150deg,color-mix(in srgb,var(--c) 62%,#fff) 0%,var(--c) 52%,color-mix(in srgb,var(--c) 78%,#000) 100%);
-  box-shadow:0 1px 0 rgba(255,255,255,.55) inset,0 -6px 10px rgba(0,0,0,.12) inset,0 6px 14px color-mix(in srgb,var(--c) 38%,transparent)}
-.tile::after{content:"";position:absolute;left:0;right:0;top:0;height:46%;background:linear-gradient(rgba(255,255,255,.34),rgba(255,255,255,0));border-radius:inherit}
-.tile svg{position:relative;z-index:1;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+.tile{display:inline-grid;place-items:center;flex:none;border-radius:24%;position:relative;overflow:hidden;
+  background:radial-gradient(120% 90% at 20% 0%,color-mix(in srgb,var(--c) 55%,#fff) 0%,transparent 55%),
+    linear-gradient(155deg,color-mix(in srgb,var(--c) 70%,#fff) 0%,var(--c) 48%,color-mix(in srgb,var(--c) 70%,#000) 100%);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--c) 60%,#000) inset,0 1.5px 0 rgba(255,255,255,.6) inset,0 -8px 14px rgba(0,0,0,.14) inset,
+    0 1px 2px rgba(15,23,42,.18),0 10px 20px -6px color-mix(in srgb,var(--c) 55%,transparent);transition:transform .2s}
+.prod:hover .tile{transform:translateY(-2px) scale(1.03)}
+.tile::after{content:"";position:absolute;left:6%;right:6%;top:3%;height:44%;background:linear-gradient(rgba(255,255,255,.42),rgba(255,255,255,.04));border-radius:60% 60% 50% 50%/80% 80% 40% 40%}
+.tile svg{position:relative;z-index:1;filter:drop-shadow(0 1.5px 1.5px rgba(0,0,0,.3))}
+.tile .mono-ch{position:relative;z-index:1;color:#fff;font-weight:800;line-height:1;text-shadow:0 2px 3px rgba(0,0,0,.3)}
 .tile.img{background:#fff;border:1px solid var(--line);box-shadow:var(--shadow)}
 .tile.img::after{display:none}
 .tile.img img{width:100%;height:100%;object-fit:cover}

@@ -371,5 +371,88 @@ class Reset(unittest.TestCase):
         self.assertEqual((len(row["action"]), len(row["detail"])), (40, 300))
 
 
+class AutoPay(unittest.TestCase):
+    BANK = ("Subject: Credited\nDear customer, Rs. 500.00 has been credited to your account "
+            "via UPI. UPI Ref No 412345678901. Thank you.")
+
+    def setUp(self):
+        import autopay
+        self.ap = autopay
+        for k, v in (("upi_auto", "1"), ("upi_alert_senders", "alerts@bank.example"), ("binance_auto", "1")):
+            conn.execute("UPDATE settings SET value=? WHERE key=?", (v, k))
+        conn.execute("UPDATE settings SET value='100' WHERE key='usd_inr_rate'")
+        os.environ.update(IMAP_HOST="x", IMAP_USER="u", IMAP_PASS="p", BINANCE_API_KEY="k", BINANCE_API_SECRET="s")
+
+    def test_parser(self):
+        self.assertEqual(self.ap.parse_alert(self.BANK), (50000, "412345678901"))
+        self.assertEqual(self.ap.parse_alert("INR 1,250.50 received from X. 123456789012"), (125050, "123456789012"))
+        self.assertIsNone(self.ap.parse_alert("Rs. 500 debited from your account. UTR 412345678901"))
+        self.assertIsNone(self.ap.parse_alert("Rs 500 credited. Numbers 111111111111 and 222222222222"))  # guess nahi
+        self.assertIsNone(self.ap.parse_alert("Hello, win Rs 500 now"))
+
+    def _dep(self, email, usd, utr):
+        uid = mk(email)
+        return uid, store.create_deposit(conn, uid, "upi", usd, utr)
+
+    def test_email_after_submit_approves_once_with_enough_amount(self):
+        uid, d = self._dep("ap1@example.com", "5.00", "412345678901")
+        self.assertEqual(d["status"], "pending")
+        self.assertTrue(self.ap.record_incoming(conn, "upi", "412345678901", 50000, "INR"))
+        self.assertTrue(self.ap.match_incoming(conn, "upi", "412345678901"))
+        self.assertFalse(self.ap.match_incoming(conn, "upi", "412345678901"))
+        self.assertEqual(conn.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()["balance"], 500)
+
+    def test_short_payment_not_approved_and_email_before_submit(self):
+        self.ap.record_incoming(conn, "upi", "999999999991", 40000, "INR")  # email pehle
+        uid = mk("ap2@example.com")
+        d = store.create_deposit(conn, uid, "upi", "5.00", "999999999991")
+        self.assertFalse(self.ap.try_match_deposit(conn, "upi", "999999999991"))  # Rs400 < Rs500
+        self.assertEqual(conn.execute("SELECT status FROM deposits WHERE id=?", (d["id"],)).fetchone()["status"], "pending")
+        self.ap.record_incoming(conn, "upi", "999999999992", 50000, "INR")
+        d2 = store.create_deposit(conn, uid, "upi", "5.00", "999999999992")
+        self.assertTrue(self.ap.try_match_deposit(conn, "upi", "999999999992"))
+
+    def test_sender_and_dkim(self):
+        import email as em
+        ok = em.message_from_string("From: Bank <alerts@bank.example>\nAuthentication-Results: mx; dkim=pass\n\nx")
+        self.assertTrue(self.ap.sender_ok(ok, "alerts@bank.example"))
+        nodkim = em.message_from_string("From: alerts@bank.example\n\nx")
+        self.assertFalse(self.ap.sender_ok(nodkim, "alerts@bank.example"))
+        fake = em.message_from_string("From: evil@x.example\nAuthentication-Results: mx; dkim=pass\n\nx")
+        self.assertFalse(self.ap.sender_ok(fake, "alerts@bank.example"))
+        self.assertTrue(self.ap.sender_ok(ok, "@bank.example"))
+
+    def test_poll_mail_with_fake_imap(self):
+        uid, d = self._dep("ap3@example.com", "5.00", "555555555555")
+        raw = ("From: alerts@bank.example\nSubject: Credit alert\nAuthentication-Results: mx; dkim=pass\n\n"
+               "Rs. 500.00 credited. UTR 555555555555").encode()
+        spoof = ("From: alerts@bank.example\nSubject: Credit alert\n\nRs. 500.00 credited. UTR 777777777777").encode()
+        stored = []
+
+        class FakeIMAP:
+            def login(self, u, p): pass
+            def select(self, b): return "OK", [b"2"]
+            def search(self, *a): return "OK", [b"1 2"]
+            def fetch(self, n, what): return "OK", [(b"x", spoof if n == b"2" else raw)]
+            def store(self, n, *a): stored.append(n)
+            def logout(self): pass
+
+        self.assertEqual(self.ap.poll_mail(conn, lambda: FakeIMAP()), 1)
+        self.assertEqual(stored, [b"1", b"2"])
+        self.assertIsNone(conn.execute("SELECT 1 FROM incoming WHERE ref='777777777777'").fetchone())  # DKIM nahi => ignore
+
+    def test_binance_poll(self):
+        uid = mk("ap4@example.com")
+        d = store.create_deposit(conn, uid, "binance_id", "3.00", "M_P_1234567890")
+        data = {"code": "000000", "data": [
+            {"orderType": "C2C", "transactionId": "M_P_1234567890", "amount": "3.00", "currency": "USDT"},
+            {"orderType": "C2C", "transactionId": "OUT1", "amount": "-9", "currency": "USDT"},
+            {"orderType": "C2C", "transactionId": "BNB1", "amount": "1", "currency": "BNB"}]}
+        self.assertEqual(self.ap.poll_binance(conn, lambda *a: data), 1)
+        self.assertEqual(self.ap.poll_binance(conn, lambda *a: data), 0)
+        self.assertEqual(conn.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()["balance"], 300)
+        self.assertIsNone(conn.execute("SELECT 1 FROM incoming WHERE ref IN ('OUT1','BNB1')").fetchone())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

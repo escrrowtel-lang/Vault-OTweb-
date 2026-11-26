@@ -50,6 +50,10 @@
     px = px || 56;
     var st = 'style="--c:' + esc(p.color || "#7c3aed") + ";width:" + px + "px;height:" + px + 'px"';
     if (p.image) return '<span class="tile img" ' + st + '><img src="' + esc(p.image) + '" alt="" loading="lazy"></span>';
+    if (p.glyph === "mono" && p.name) {
+      var ch = esc(String(p.name).trim().charAt(0).toUpperCase());
+      return '<span class="tile" ' + st + '><b class="mono-ch" style="font-size:' + Math.round(px * 0.5) + 'px">' + ch + "</b></span>";
+    }
     var g = G[p.glyph] || G.star;
     return '<span class="tile" ' + st + '><svg viewBox="0 0 24 24" width="' + Math.round(px * 0.52) + '" height="' + Math.round(px * 0.52) +
       '" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + g + "</svg></span>";
@@ -159,5 +163,5 @@
     if (s.store_name) { S.BRAND = s.store_name; document.querySelectorAll(".logo").forEach(function (l) { var n = l.querySelector("#brand-name"); if (n) n.textContent = s.store_name; }); }
   }).catch(function () {});
 
-  window.Core = { $: $, esc: esc, money: money, api: api, me: me, icon: icon, glyphs: Object.keys(G), toast: toast, modal: modal, copy: copy, busy: busy, formModal: formModal, ready: ready };
+  window.Core = { $: $, esc: esc, money: money, api: api, me: me, icon: icon, glyphs: Object.keys(G).concat(["mono"]), toast: toast, modal: modal, copy: copy, busy: busy, formModal: formModal, ready: ready };
 })();

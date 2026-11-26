@@ -17,6 +17,7 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 import mailer
+import autopay
 import store
 from db import ApiError, connect, tx, to_cents, get_settings
 
@@ -93,6 +94,8 @@ def api_settings(r):
         "binance_id": s["binance_id"] if "binance_id" in en else "",
         "usdt_address": s["usdt_address"] if "usdt_bep20" in en else "",
         "support_text": s["support_text"], "support_url": s["support_url"],
+        "upi_auto": s["upi_auto"] == "1" and bool(os.environ.get("IMAP_USER")),
+        "binance_auto": s["binance_auto"] == "1" and bool(os.environ.get("BINANCE_API_KEY")),
     }
 
 
@@ -214,7 +217,12 @@ def api_deposit(r):
     if limited(("dep", r.user["id"]), 15, 3600):
         raise ApiError(429, "Bahut requests, baad mein try karo")
     method, ref = r.need("method", "reference")
-    return store.create_deposit(r.conn, r.user["id"], method, r.body.get("amount", 0), ref)
+    out = store.create_deposit(r.conn, r.user["id"], method, r.body.get("amount", 0), ref)
+    if out["status"] == "pending" and method in ("upi", "binance_id"):
+        ref = r.body.get("reference", "").strip()  # email / Binance entry pehle aa chuki ho to turant approve
+        if autopay.try_match_deposit(r.conn, method, ref):
+            out = dict(out, status="approved")
+    return out
 
 
 @route("GET", "/api/referral")
@@ -495,6 +503,19 @@ def adm_settings_get(r):
     return {"settings": get_settings(r.conn)}
 
 
+@route("GET", "/api/admin/autopay", "admin")
+def adm_autopay(r):
+    env = lambda *k: all(os.environ.get(x) for x in k)
+    return {"mail_env": env("IMAP_HOST", "IMAP_USER", "IMAP_PASS"), "binance_env": env("BINANCE_API_KEY", "BINANCE_API_SECRET"),
+            "status": autopay.STATUS}
+
+
+@route("POST", "/api/admin/autopay/test-parse", "admin")
+def adm_autopay_parse(r):
+    got = autopay.parse_alert(str(r.need("text")[0])[:20000])
+    return {"ok": bool(got), "amount_inr": got[0] / 100 if got else None, "utr": got[1] if got else None}
+
+
 @route("POST", "/api/admin/settings", "admin")
 def adm_settings_set(r):
     allowed = set(db.DEFAULT_SETTINGS)
@@ -508,6 +529,10 @@ def adm_settings_set(r):
                     raise ApiError(400, "INR rate sahi nahi hai")
                 if k == "usdt_address" and v and not re.match(r"^0x[0-9a-fA-F]{40}$", v):
                     raise ApiError(400, "USDT address sahi nahi hai")
+                if k in ("upi_auto", "binance_auto", "upi_require_dkim") and v not in ("0", "1"):
+                    raise ApiError(400, "%s 0 ya 1 hona chahiye" % k)
+                if k == "upi_alert_senders" and v and not all(re.match(r"^@?[^\s@,]+(@[^\s@,]+)?$", x.strip()) for x in v.split(",")):
+                    raise ApiError(400, "Sender list sahi nahi hai (comma se alerts@bank.com ya @bank.com)")
                 if k == "methods_enabled":
                     v = ",".join(x for x in v.split(",") if x in ("upi", "binance_id", "usdt_bep20"))
                 if k == "site_url" and v and not re.match(r"^https?://[^\s/]+$", v.rstrip("/")):
@@ -685,6 +710,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     db.init()
+    autopay.start()
     host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8000"))
     srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True

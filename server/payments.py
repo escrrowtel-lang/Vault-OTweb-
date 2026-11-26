@@ -13,7 +13,7 @@ from db import ApiError
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 UTR_RE = re.compile(r"^\d{12}$")
 TX_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
-BINANCE_REF_RE = re.compile(r"^[A-Za-z0-9\-]{6,64}$")
+BINANCE_REF_RE = re.compile(r"^[A-Za-z0-9_\-]{6,64}$")
 ADDR_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 

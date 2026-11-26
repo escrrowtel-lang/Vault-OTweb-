@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS deposits(
   decided_at INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS dep_ref ON deposits(method, reference) WHERE status IN ('pending','approved');
+CREATE TABLE IF NOT EXISTS incoming(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  currency TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  deposit_id INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS incoming_ref ON incoming(source, ref);
 CREATE TABLE IF NOT EXISTS crypto_intents(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
@@ -186,6 +196,10 @@ DEFAULT_SETTINGS = {
     "support_text": "",
     "support_url": "",
     "site_url": "",
+    "upi_auto": "0",
+    "upi_alert_senders": "",
+    "upi_require_dkim": "1",
+    "binance_auto": "0",
 }
 
 
