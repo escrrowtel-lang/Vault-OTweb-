@@ -1,12 +1,20 @@
-"""SQLite layer. Sab paisa integer CENTS (1/100 USD) mein store hota hai."""
+"""Database layer: SQLite (default) ya PostgreSQL/Supabase (DATABASE_URL set ho to).
+Sab paisa integer CENTS (1/100 USD) mein store hota hai."""
 import os
+import re
 import sqlite3
+from urllib.parse import urlparse
 from contextlib import contextmanager
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.environ.get("VAULT_DB", os.path.join(HERE, "..", "data", "store.db"))
 UPLOAD_DIR = os.environ.get("VAULT_UPLOADS", os.path.join(HERE, "..", "data", "uploads"))
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_PG = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
+PG_SCHEMA = os.environ.get("VAULT_PG_SCHEMA", "vault")
+PG_LOCK_KEY = 7236001  # har write transaction ye lock leti hai (SQLite ke BEGIN IMMEDIATE jaisa: ek time par ek writer)
 
 
 class ApiError(Exception):
@@ -190,7 +198,36 @@ def fmt(cents):
     return "%d.%02d" % (cents // 100, cents % 100)
 
 
+def _pg_conninfo():
+    u = urlparse(DATABASE_URL)
+    info = DATABASE_URL
+    sep = "&" if "?" in info else "?"
+    extra = []
+    if "connect_timeout" not in info:
+        extra.append("connect_timeout=10")
+    local = (u.hostname or "") in ("", "localhost", "127.0.0.1", "::1")
+    if "sslmode" not in info and not local:
+        extra.append("sslmode=require")  # remote DB (Supabase) hamesha encrypted
+    return info + (sep + "&".join(extra) if extra else "")
+
+
+def _tables():
+    return re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)\(", SCHEMA)
+
+
+def _id_tables():
+    return set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)\(\s*id INTEGER PRIMARY KEY AUTOINCREMENT", SCHEMA))
+
+
+def pg_schema_sql():
+    s = SCHEMA.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY").replace("BLOB", "BYTEA")
+    return re.sub(r"\bINTEGER\b", "BIGINT", s)
+
+
 def connect():
+    if USE_PG:
+        import pg
+        return pg.acquire(_pg_conninfo(), PG_SCHEMA, _id_tables())
     c = sqlite3.connect(DB_PATH, timeout=15, isolation_level=None)
     c.row_factory = sqlite3.Row
     c.execute("PRAGMA journal_mode=WAL")
@@ -201,6 +238,17 @@ def connect():
 
 @contextmanager
 def tx(conn):
+    if USE_PG:
+        conn.begin()
+        try:
+            conn.execute("SELECT pg_advisory_xact_lock(%d)" % PG_LOCK_KEY)
+            yield conn
+        except BaseException:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        return
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield conn
@@ -212,13 +260,40 @@ def tx(conn):
 
 
 def init():
-    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     os.makedirs(UPLOAD_DIR, exist_ok=True)
+    if USE_PG:
+        if not re.fullmatch(r"[a-z_][a-z0-9_]*", PG_SCHEMA):
+            raise SystemExit("VAULT_PG_SCHEMA sahi nahi hai")
+        import pg
+        # schema alag se banao (search_path abhi set nahi), phir tables
+        c = pg.Connection(_pg_conninfo(), "", _id_tables())
+        c.executescript('CREATE SCHEMA IF NOT EXISTS "%s"' % PG_SCHEMA)
+        c._really_close()  # ye connection bina search_path ka hai, pool mein nahi jaana chahiye
+        c = connect()
+        with tx(c):
+            c.executescript(pg_schema_sql())
+            for tname in _tables():
+                # Supabase ka public REST API in tables ko na chhu sake: RLS ON, koi policy nahi
+                c.executescript('ALTER TABLE "%s" ENABLE ROW LEVEL SECURITY' % tname)
+            c.executescript(
+                "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN "
+                "EXECUTE 'REVOKE ALL ON SCHEMA \"%(s)s\" FROM anon, authenticated'; "
+                "EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA \"%(s)s\" FROM anon, authenticated'; "
+                "EXECUTE 'REVOKE ALL ON ALL SEQUENCES IN SCHEMA \"%(s)s\" FROM anon, authenticated'; "
+                "END IF; END $$" % {"s": PG_SCHEMA})
+        _seed_settings(c)
+        c.close()
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     c = connect()
     c.executescript(SCHEMA)
-    for k, v in DEFAULT_SETTINGS.items():
-        c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
+    _seed_settings(c)
     c.close()
+
+
+def _seed_settings(c):
+    for k, v in DEFAULT_SETTINGS.items():
+        c.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", (k, v))
 
 
 def get_settings(conn):

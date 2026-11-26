@@ -259,6 +259,87 @@ class Http(unittest.TestCase):
         self.assertTrue(self.call("GET", "/api/admin/audit", opener=admin)[1]["audit"])
 
 
+class Concurrency(unittest.TestCase):
+    """Asli parallel connections (har thread ka apna connection). SQLite aur PostgreSQL dono par chalta hai."""
+
+    def run_parallel(self, jobs):
+        gate = threading.Barrier(len(jobs))
+        results = [None] * len(jobs)
+
+        def work(i, fn):
+            c = connect()
+            try:
+                gate.wait(10)
+                results[i] = ("ok", fn(c))
+            except ApiError as e:
+                results[i] = ("api", e.status)
+            except BaseException as e:  # noqa - koi bhi aur error = bug
+                results[i] = ("BUG", repr(e))
+            finally:
+                c.close()
+        ths = [threading.Thread(target=work, args=(i, fn)) for i, fn in enumerate(jobs)]
+        [x.start() for x in ths]
+        [x.join(30) for x in ths]
+        self.assertFalse([r for r in results if r is None or r[0] == "BUG"], results)
+        return results
+
+    def bal(self, uid):
+        return conn.execute("SELECT balance FROM users WHERE id=?", (uid,)).fetchone()[0]
+
+    def test_last_item_sold_once(self):
+        # Sold-out auto plan par pre-order banta hai (design). Isliye: item ek hi ko mile, baaki pending pre-order.
+        pid, vid = catalog("auto", "4.80")
+        store.add_inventory(conn, vid, ["only:one"])
+        users = [mk("race_last%d@example.com" % i) for i in range(10)]
+        for u in users:
+            fund(u, "50")
+        res = self.run_parallel([(lambda c, u=u: store.buy(c, u, vid, 1)) for u in users])
+        self.assertEqual(sum(1 for r in res if r[0] == "ok"), 10, res)
+        q = lambda s: conn.execute(s, (vid,)).fetchone()[0]
+        self.assertEqual(q("SELECT COUNT(*) FROM orders WHERE variation_id=? AND status='completed'"), 1)
+        self.assertEqual(q("SELECT COUNT(*) FROM orders WHERE variation_id=? AND status='pending' AND preorder=1"), 9)
+        self.assertEqual(q("SELECT COUNT(*) FROM inventory WHERE variation_id=? AND status='sold'"), 1)
+        self.assertEqual(q("SELECT COUNT(*) FROM orders WHERE variation_id=? AND delivery_text LIKE '%only:one%'"), 1)
+        self.assertEqual(sum(self.bal(u) for u in users), 10 * 5000 - 10 * 480)  # sab ne ek baar hi pay kiya
+
+    def test_stock_two_five_buyers(self):
+        # 2 item, 5 khareedar: pre-order se pehle sirf 2 ko item milna chahiye, kisi item ke do owner nahi
+        pid, vid = catalog("auto", "4.80")
+        store.add_inventory(conn, vid, ["a:1", "b:2"])
+        users = [mk("race_two%d@example.com" % i) for i in range(5)]
+        for u in users:
+            fund(u, "50")
+        self.run_parallel([(lambda c, u=u: store.buy(c, u, vid, 1)) for u in users])
+        q = lambda s: conn.execute(s, (vid,)).fetchone()[0]
+        self.assertEqual(q("SELECT COUNT(*) FROM orders WHERE variation_id=? AND status='completed'"), 2)
+        self.assertEqual(q("SELECT COUNT(DISTINCT order_id) FROM inventory WHERE variation_id=? AND status='sold'"), 2)
+        self.assertEqual(q("SELECT COUNT(*) FROM inventory WHERE variation_id=? AND status='sold'"), 2)
+
+    def test_wallet_cannot_overspend(self):
+        pid, vid = catalog("auto", "4.80")
+        store.add_inventory(conn, vid, ["i%d:p" % i for i in range(20)])
+        uid = mk("race_wallet@example.com")
+        fund(uid, "9.60")  # sirf 2 item ke paise
+        res = self.run_parallel([(lambda c: store.buy(c, uid, vid, 1)) for _ in range(8)])
+        self.assertEqual(sum(1 for r in res if r[0] == "ok"), 2, res)
+        self.assertEqual(self.bal(uid), 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM inventory WHERE variation_id=? AND status='sold'", (vid,)).fetchone()[0], 2)
+
+    def test_deposit_approved_once(self):
+        uid = mk("race_dep@example.com")
+        d = store.create_deposit(conn, uid, "upi", "10", "555000111222")
+        before = self.bal(uid)
+        res = self.run_parallel([(lambda c: store.decide_deposit(c, d["id"], "approve")) for _ in range(6)])
+        self.assertEqual(sum(1 for r in res if r[0] == "ok"), 1, res)
+        self.assertEqual(self.bal(uid), before + 1000)
+
+    def test_same_utr_from_many_users(self):
+        users = [mk("race_utr%d@example.com" % i) for i in range(6)]
+        res = self.run_parallel([(lambda c, u=u: store.create_deposit(c, u, "upi", "5", "777000888999")) for u in users])
+        self.assertEqual(sum(1 for r in res if r[0] == "ok"), 1, res)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM deposits WHERE reference='777000888999'").fetchone()[0], 1)
+
+
 class Reset(unittest.TestCase):
     def test_reset_token_single_use_and_logs_out(self):
         uid = mk("reset@example.com")

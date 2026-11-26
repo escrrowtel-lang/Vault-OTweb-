@@ -3,6 +3,9 @@
   python3 server/manage.py create-admin you@example.com      (password poochega, screen par nahi dikhega)
   python3 server/manage.py set-password you@example.com
   python3 server/manage.py seed-demo                         (sirf layout dekhne ke liye DEMO products)
+  python3 server/manage.py migrate-sqlite /path/store.db     (purana SQLite data -> Postgres/Supabase; DATABASE_URL set ho)
+  python3 server/manage.py backup-json /path/backup.json     (poora backup, SQLite ya Postgres dono se)
+  python3 server/manage.py restore-json /path/backup.json    (khaali database mein wapas daalo)
 """
 import getpass
 import os
@@ -21,7 +24,93 @@ def ask_password():
     return p1
 
 
+SKIP_TABLES = ("sessions", "password_resets")  # logins dobara karne honge
+
+
+def _load(dst, data):
+    """data = {table: [row-dict]} ko khaali database mein daalo (ids ke saath). SQLite aur Postgres dono par."""
+    if dst.execute("SELECT COUNT(*) FROM users").fetchone()[0]:
+        sys.exit("Database mein pehle se users hain. Ye kaam sirf khaali database mein hota hai.")
+    counts = {}
+    with db.tx(dst):
+        for tname in db._tables():
+            if tname in SKIP_TABLES or tname not in data:
+                continue
+            rows = data[tname]
+            counts[tname] = len(rows)
+            for r in rows:
+                cols = list(r.keys())
+                sql = "INSERT INTO %s(%s) VALUES(%s)" % (tname, ",".join(cols), ",".join("?" * len(cols)))
+                if tname == "settings":
+                    sql += " ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+                dst.execute(sql, tuple(r[c] for c in cols))
+        if db.USE_PG:
+            for tname in sorted(db._id_tables()):
+                dst.execute("SELECT setval(pg_get_serial_sequence('%s','id'), COALESCE((SELECT MAX(id) FROM %s),1), "
+                            "(SELECT MAX(id) FROM %s) IS NOT NULL)" % (tname, tname, tname))
+        for tname, n in counts.items():
+            got = dst.execute("SELECT COUNT(*) FROM %s" % tname).fetchone()[0]
+            if got != n:
+                raise SystemExit("Row count match nahi hua (%s: %d -> %d). Kuch copy nahi hua." % (tname, n, got))
+        bad = dst.execute("SELECT COUNT(*) FROM users u WHERE u.balance <> COALESCE((SELECT SUM(delta) FROM ledger l WHERE l.user_id=u.id),0)").fetchone()[0]
+    print("Load ho gaya:", ", ".join("%s=%d" % kv for kv in counts.items() if kv[1]))
+    if bad:
+        print("DHYAN: %d users ka balance ledger ke jod se match nahi karta." % bad)
+
+
+def migrate_sqlite(src_path):
+    """SQLite ka poora data khaali Postgres database mein copy karo."""
+    import sqlite3
+    if not db.USE_PG:
+        sys.exit("Pehle DATABASE_URL set karo (postgresql://...)")
+    if not os.path.isfile(src_path):
+        sys.exit("SQLite file nahi mili: %s" % src_path)
+    src = sqlite3.connect("file:%s?mode=ro" % src_path, uri=True)
+    src.row_factory = sqlite3.Row
+    data = {tn: [dict(zip(r.keys(), tuple(r))) for r in src.execute("SELECT * FROM %s" % tn).fetchall()]
+            for tn in db._tables() if tn not in SKIP_TABLES}
+    _load(connect(), data)
+
+
+def _enc(v):
+    return {"$hex": bytes(v).hex()} if isinstance(v, (bytes, bytearray)) else v
+
+
+def _dec(v):
+    return bytes.fromhex(v["$hex"]) if isinstance(v, dict) and "$hex" in v else v
+
+
+def backup_json(path):
+    """Poora database ek JSON file mein (SQLite ya Postgres, dono se). File mein password hashes aur inventory hai: private rakho."""
+    import json
+    conn = connect()
+    data = {}
+    for tn in db._tables():
+        if tn in SKIP_TABLES:
+            continue
+        data[tn] = [{k: _enc(r[k]) for k in r.keys()} for r in conn.execute("SELECT * FROM %s" % tn).fetchall()]
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"version": 1, "tables": data}, f)
+    os.chmod(path, 0o600)
+    print("Backup ready:", path, "(%d tables)" % len(data))
+
+
+def restore_json(path):
+    import json
+    with open(path) as f:
+        doc = json.load(f)
+    if doc.get("version") != 1:
+        sys.exit("Ye backup file pehchani nahi gayi")
+    data = {tn: [{k: _dec(v) for k, v in r.items()} for r in rows] for tn, rows in doc["tables"].items()}
+    _load(connect(), data)
+
+
 def main():
+    if len(sys.argv) > 2 and sys.argv[1] in ("migrate-sqlite", "backup-json", "restore-json"):
+        db.init()
+        {"migrate-sqlite": migrate_sqlite, "backup-json": backup_json, "restore-json": restore_json}[sys.argv[1]](sys.argv[2])
+        return
     db.init()
     conn = connect()
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""

@@ -10,7 +10,7 @@ APP=/opt/vault-store
 DATA=/var/lib/vault-store
 
 apt-get update -y
-apt-get install -y nginx python3 rsync
+apt-get install -y nginx python3 rsync libpq5
 
 id vault >/dev/null 2>&1 || useradd --system --home "$DATA" --shell /usr/sbin/nologin vault
 mkdir -p "$APP" "$DATA/uploads"

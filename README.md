@@ -1,7 +1,7 @@
 # Vault Store
 
 Apna standalone OTT/digital subscription store: website + wallet + inventory + admin panel. Telegram ki zaroorat nahi.
-Sirf Python 3 chahiye (koi pip package nahi), database SQLite.
+Sirf Python 3 chahiye (koi pip package nahi). Database: SQLite (default) ya **Supabase/Postgres** (`DATABASE_URL` set karo).
 
 ## Kya kya hai
 - **Customer:** signup/login, catalog, plan kharidna (wallet se), orders + delivery, wallet top-up, referral
@@ -14,6 +14,7 @@ Sirf Python 3 chahiye (koi pip package nahi), database SQLite.
 
 ## Local par chalao
 ```
+# (Postgres par chalane ke liye pehle: export DATABASE_URL="postgresql://...")
 python3 server/manage.py create-admin you@example.com
 python3 server/manage.py seed-demo          # sirf layout dekhne ke liye DEMO data
 python3 server/app.py                       # http://127.0.0.1:8000
@@ -36,6 +37,15 @@ sudo journalctl -u vault-store -n 50 --no-pager   # log
 ```
 Data `/var/lib/vault-store` mein hai (backup yahin se lo).
 
+## Supabase (Postgres) ko database banana
+1. Supabase mein project banao. **Project Settings > Database > Connection string > "Session pooler" (URI)** copy karo, `[YOUR-PASSWORD]` ki jagah apna password (special characters URL-encode).
+2. VPS par: `cd ~/Vault-OTweb- && sudo bash deploy/set-database.sh` aur string paste karo (screen par nahi dikhegi). Script connection test karti hai, `/etc/vault-store.env` (sirf root) mein rakhti hai, aur purana SQLite data ho to migrate karne ka option deti hai.
+3. Naye database par admin banao: `sudo bash deploy/admin.sh create-admin aapka@email.com`.
+
+Kaise kaam karta hai: tables private schema `vault` mein bante hain, sab par Row Level Security ON (koi policy nahi), isliye Supabase ke public REST API se koi data nahi chhu sakta. Sirf aapka server (direct Postgres login) padh/likh sakta hai. Har write transaction ek advisory lock leti hai, isliye SQLite jaisi hi safety hai (double-sell/overspend nahi). Driver system ki `libpq5` hai (install.sh laga deta hai), koi pip package nahi.
+
+SQLite par wapas jaana: `/etc/vault-store.env` se `DATABASE_URL=` wali line hatao aur `sudo systemctl restart vault-store`.
+
 ## Email (optional, password reset ke liye)
 `/etc/vault-store.env` banao (sirf root padh sake: `chmod 600`):
 ```
@@ -48,7 +58,7 @@ SMTP_FROM=Vault Store <noreply@example.com>
 Phir `sudo systemctl restart vault-store` aur admin Settings mein **Site URL** bharo (jaise `https://yourdomain.com`). Email setup na ho to bhi chalta hai: admin se reset link lo.
 
 ## Backup
-Roz 03:30 par apne aap. Abhi lena ho: `sudo /usr/local/sbin/vault-backup.sh`. Backup mein inventory (account details) hai, isliye use private rakho.
+Roz 03:30 par apne aap (SQLite ho ya Supabase, dono ke liye), 14 din tak. Abhi lena ho: `sudo /usr/local/sbin/vault-backup.sh`. Supabase par ye ek JSON file banata hai: `python3 server/manage.py backup-json file.json`, wapas daalne ke liye khaali database mein `restore-json file.json`. Backup mein inventory (account details) aur password hashes hain, isliye use private rakho.
 
 ## Payment settings
 Admin panel > Settings mein UPI ID, Binance ID, USDT wallet address, confirmations aur min/max deposit bharo. Koi secret/API key code mein nahi hai.
