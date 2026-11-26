@@ -10,7 +10,8 @@ APP=/opt/vault-store
 
 read -rsp "Supabase connection string paste karo (dikhegi nahi): " URL; echo
 case "$URL" in postgres://*|postgresql://*) ;; *) echo "String postgresql:// se shuru honi chahiye"; exit 1;; esac
-case "$URL" in *"[YOUR-PASSWORD]"*) echo "[YOUR-PASSWORD] ki jagah apna asli password daalo"; exit 1;; esac
+case "$URL" in *"[YOUR-"*) echo "[YOUR-...PASSWORD] ki jagah apna asli password daalo"; exit 1;; esac
+case "$URL" in *:6543/*) echo "Port 6543 (transaction pooler) par ye app nahi chalti. Port 5432 (Session pooler) use karo: string mein :6543 ko :5432 kar do."; exit 1;; esac
 
 echo "Connection test (tables bhi ban jaayengi)..."
 if ! runuser -u vault -- env DATABASE_URL="$URL" python3 -I "$APP/server/manage.py" >/dev/null; then
