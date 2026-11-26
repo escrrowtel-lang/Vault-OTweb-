@@ -3,6 +3,7 @@ Sab paisa integer CENTS (1/100 USD) mein store hota hai."""
 import os
 import re
 import sqlite3
+import sys
 from urllib.parse import urlparse
 from contextlib import contextmanager
 from decimal import Decimal, ROUND_DOWN, InvalidOperation
@@ -260,7 +261,10 @@ def tx(conn):
 
 
 def init():
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    try:
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+    except OSError as e:  # manage.py jaise tools ko upload folder ki zaroorat nahi; server ko hai (systemd mein sahi path set hai)
+        print("warning: upload folder nahi ban paya (%s): %s" % (UPLOAD_DIR, e), file=sys.stderr)
     if USE_PG:
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", PG_SCHEMA):
             raise SystemExit("VAULT_PG_SCHEMA sahi nahi hai")

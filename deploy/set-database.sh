@@ -14,8 +14,8 @@ case "$URL" in *"[YOUR-"*) echo "[YOUR-...PASSWORD] ki jagah apna asli password 
 case "$URL" in *:6543/*) echo "Port 6543 (transaction pooler) par ye app nahi chalti. Port 5432 (Session pooler) use karo: string mein :6543 ko :5432 kar do."; exit 1;; esac
 
 echo "Connection test (tables bhi ban jaayengi)..."
-if ! runuser -u vault -- env DATABASE_URL="$URL" python3 -I "$APP/server/manage.py" >/dev/null; then
-  echo "Connect nahi hua. Password sahi hai? 'Session pooler' wali string use ki? (special characters URL-encode hone chahiye)"; exit 1
+if ! runuser -u vault -- env DATABASE_URL="$URL" VAULT_UPLOADS=/var/lib/vault-store/uploads python3 -I "$APP/server/manage.py" >/dev/null; then
+  echo "Connect nahi hua. Upar ka error dekho: 'password authentication failed' ho to password galat hai; 'Tenant or user not found' ho to string/username galat hai."; exit 1
 fi
 
 touch "$ENVF"; chmod 600 "$ENVF"
@@ -27,7 +27,7 @@ OLD=/var/lib/vault-store/store.db
 if [ -f "$OLD" ]; then
   read -rp "Purana SQLite data (users, orders, inventory) Supabase mein le jaayein? [y/N] " A
   if [ "$A" = "y" ] || [ "$A" = "Y" ]; then
-    runuser -u vault -- env DATABASE_URL="$URL" python3 -I "$APP/server/manage.py" migrate-sqlite "$OLD" \
+    runuser -u vault -- env DATABASE_URL="$URL" VAULT_UPLOADS=/var/lib/vault-store/uploads python3 -I "$APP/server/manage.py" migrate-sqlite "$OLD" \
       && echo "Migration ho gaya. Purani file $OLD safe rakhi hai." || echo "Migration nahi hua (khaali DB chahiye). Purana SQLite data waisa hi hai."
   fi
 fi
