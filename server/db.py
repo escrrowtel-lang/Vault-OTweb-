@@ -14,7 +14,11 @@ UPLOAD_DIR = os.environ.get("VAULT_UPLOADS", os.path.join(HERE, "..", "data", "u
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 USE_PG = DATABASE_URL.lower().startswith(("postgres://", "postgresql://"))
-PG_SCHEMA = os.environ.get("VAULT_PG_SCHEMA", "vault")
+PG_SCHEMA = os.environ.get("VAULT_PG_SCHEMA", "vaultstore")
+# Supabase ke apne schemas: inme tables nahi banane (jaise "vault" unka secrets feature hai)
+PG_RESERVED = {"vault", "auth", "storage", "extensions", "graphql", "graphql_public", "realtime", "pgsodium",
+               "pgsodium_masks", "supabase_functions", "supabase_migrations", "net", "cron", "pgbouncer",
+               "pg_catalog", "information_schema", "pg_toast"}
 PG_LOCK_KEY = 7236001  # har write transaction ye lock leti hai (SQLite ke BEGIN IMMEDIATE jaisa: ek time par ek writer)
 
 
@@ -268,6 +272,8 @@ def init():
     if USE_PG:
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", PG_SCHEMA):
             raise SystemExit("VAULT_PG_SCHEMA sahi nahi hai")
+        if PG_SCHEMA in PG_RESERVED or PG_SCHEMA.startswith("pg_"):
+            raise SystemExit("Schema naam '%s' Supabase ka apna hai. Doosra naam rakho (default: vaultstore)." % PG_SCHEMA)
         import pg
         # schema alag se banao (search_path abhi set nahi), phir tables
         c = pg.Connection(_pg_conninfo(), "", _id_tables())

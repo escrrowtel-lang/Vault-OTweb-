@@ -42,7 +42,7 @@ Data `/var/lib/vault-store` mein hai (backup yahin se lo).
 2. VPS par: `cd ~/Vault-OTweb- && sudo bash deploy/set-database.sh` aur string paste karo (screen par nahi dikhegi). Script connection test karti hai, `/etc/vault-store.env` (sirf root) mein rakhti hai, aur purana SQLite data ho to migrate karne ka option deti hai.
 3. Naye database par admin banao: `sudo bash deploy/admin.sh create-admin aapka@email.com`.
 
-Kaise kaam karta hai: tables private schema `vault` mein bante hain, sab par Row Level Security ON (koi policy nahi), isliye Supabase ke public REST API se koi data nahi chhu sakta. Sirf aapka server (direct Postgres login) padh/likh sakta hai. Har write transaction ek advisory lock leti hai, isliye SQLite jaisi hi safety hai (double-sell/overspend nahi). Driver system ki `libpq5` hai (install.sh laga deta hai), koi pip package nahi.
+Kaise kaam karta hai: tables private schema `vaultstore` mein bante hain, sab par Row Level Security ON (koi policy nahi), isliye Supabase ke public REST API se koi data nahi chhu sakta. Sirf aapka server (direct Postgres login) padh/likh sakta hai. Har write transaction ek advisory lock leti hai, isliye SQLite jaisi hi safety hai (double-sell/overspend nahi). Driver system ki `libpq5` hai (install.sh laga deta hai), koi pip package nahi.
 
 SQLite par wapas jaana: `/etc/vault-store.env` se `DATABASE_URL=` wali line hatao aur `sudo systemctl restart vault-store`.
 
