@@ -207,9 +207,9 @@ def to_cents(value):
     try:
         d = Decimal(str(value).strip())
     except (InvalidOperation, ValueError):
-        raise ApiError(400, "Amount sahi nahi hai")
+        raise ApiError(400, "Invalid amount")
     if not d.is_finite() or d < 0:
-        raise ApiError(400, "Amount sahi nahi hai")
+        raise ApiError(400, "Invalid amount")
     return int((d * 100).quantize(Decimal("1"), rounding=ROUND_DOWN))
 
 
@@ -282,12 +282,12 @@ def init():
     try:
         os.makedirs(UPLOAD_DIR, exist_ok=True)
     except OSError as e:  # manage.py jaise tools ko upload folder ki zaroorat nahi; server ko hai (systemd mein sahi path set hai)
-        print("warning: upload folder nahi ban paya (%s): %s" % (UPLOAD_DIR, e), file=sys.stderr)
+        print("warning: could not create the upload folder (%s): %s" % (UPLOAD_DIR, e), file=sys.stderr)
     if USE_PG:
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", PG_SCHEMA):
-            raise SystemExit("VAULT_PG_SCHEMA sahi nahi hai")
+            raise SystemExit("VAULT_PG_SCHEMA is invalid")
         if PG_SCHEMA in PG_RESERVED or PG_SCHEMA.startswith("pg_"):
-            raise SystemExit("Schema naam '%s' Supabase ka apna hai. Doosra naam rakho (default: vaultstore)." % PG_SCHEMA)
+            raise SystemExit("Schema name '%s' is reserved by Supabase. Use a different name (default: vaultstore)." % PG_SCHEMA)
         import pg
         # schema alag se banao (search_path abhi set nahi), phir tables
         c = pg.Connection(_pg_conninfo(), "", _id_tables())

@@ -1,11 +1,11 @@
 """Admin tools.
 
-  python3 server/manage.py create-admin you@example.com      (password poochega, screen par nahi dikhega)
+  python3 server/manage.py create-admin you@example.com      (prompts for the password; it is not shown on screen)
   python3 server/manage.py set-password you@example.com
   python3 server/manage.py seed-demo                         (sirf layout dekhne ke liye DEMO products)
   python3 server/manage.py migrate-sqlite /path/store.db     (purana SQLite data -> Postgres/Supabase; DATABASE_URL set ho)
   python3 server/manage.py backup-json /path/backup.json     (poora backup, SQLite ya Postgres dono se)
-  python3 server/manage.py restore-json /path/backup.json    (khaali database mein wapas daalo)
+  python3 server/manage.py restore-json /path/backup.json    (restore into an empty database)
 """
 import getpass
 import os
@@ -18,9 +18,9 @@ from db import connect, ApiError
 
 
 def ask_password():
-    p1 = getpass.getpass("Password (kam se kam 8 characters): ")
-    if p1 != getpass.getpass("Dobara likho: "):
-        sys.exit("Dono password alag hain")
+    p1 = getpass.getpass("Password (at least 8 characters): ")
+    if p1 != getpass.getpass("Confirm password: "):
+        sys.exit("The passwords do not match")
     return p1
 
 
@@ -51,20 +51,20 @@ def _load(dst, data):
         for tname, n in counts.items():
             got = dst.execute("SELECT COUNT(*) FROM %s" % tname).fetchone()[0]
             if got != n:
-                raise SystemExit("Row count match nahi hua (%s: %d -> %d). Kuch copy nahi hua." % (tname, n, got))
+                raise SystemExit("Row count mismatch (%s: %d -> %d). Some rows were not copied." % (tname, n, got))
         bad = dst.execute("SELECT COUNT(*) FROM users u WHERE u.balance <> COALESCE((SELECT SUM(delta) FROM ledger l WHERE l.user_id=u.id),0)").fetchone()[0]
-    print("Load ho gaya:", ", ".join("%s=%d" % kv for kv in counts.items() if kv[1]))
+    print("Loaded:", ", ".join("%s=%d" % kv for kv in counts.items() if kv[1]))
     if bad:
-        print("DHYAN: %d users ka balance ledger ke jod se match nahi karta." % bad)
+        print("WARNING: %d users have a balance that does not match their ledger total." % bad)
 
 
 def migrate_sqlite(src_path):
     """SQLite ka poora data khaali Postgres database mein copy karo."""
     import sqlite3
     if not db.USE_PG:
-        sys.exit("Pehle DATABASE_URL set karo (postgresql://...)")
+        sys.exit("Set DATABASE_URL first (postgresql://...)")
     if not os.path.isfile(src_path):
-        sys.exit("SQLite file nahi mili: %s" % src_path)
+        sys.exit("SQLite file not found: %s" % src_path)
     src = sqlite3.connect("file:%s?mode=ro" % src_path, uri=True)
     src.row_factory = sqlite3.Row
     data = {tn: [dict(zip(r.keys(), tuple(r))) for r in src.execute("SELECT * FROM %s" % tn).fetchall()]
@@ -101,7 +101,7 @@ def restore_json(path):
     with open(path) as f:
         doc = json.load(f)
     if doc.get("version") != 1:
-        sys.exit("Ye backup file pehchani nahi gayi")
+        sys.exit("This backup file is not recognised")
     data = {tn: [{k: _dec(v) for k, v in r.items()} for r in rows] for tn, rows in doc["tables"].items()}
     _load(connect(), data)
 
@@ -117,20 +117,20 @@ def main():
     try:
         if cmd == "create-admin" and len(sys.argv) == 3:
             store.create_user(conn, sys.argv[2], ask_password(), "Admin", is_admin=1)
-            print("Admin ban gaya:", sys.argv[2])
+            print("Admin created:", sys.argv[2])
         elif cmd == "set-password" and len(sys.argv) == 3:
             import secrets
             u = conn.execute("SELECT id FROM users WHERE email=?", (sys.argv[2].lower(),)).fetchone()
             if not u:
-                sys.exit("User nahi mila")
+                sys.exit("User not found")
             pw = ask_password()
             salt = secrets.token_bytes(16)
             conn.execute("UPDATE users SET pass_hash=?, pass_salt=?, is_admin=is_admin WHERE id=?", (store._hash(pw, salt), salt, u["id"]))
             conn.execute("DELETE FROM sessions WHERE user_id=?", (u["id"],))
-            print("Password badal diya")
+            print("Password updated")
         elif cmd == "seed-demo":
             seed_demo(conn)
-            print("Demo data daal diya. Asli launch se pehle admin panel se hata do (inactive kar do).")
+            print("Demo data added. Hide or remove it in the admin panel before launch.")
         else:
             print(__doc__)
     except ApiError as e:
@@ -149,7 +149,7 @@ def seed_demo(conn):
         cid = conn.execute("INSERT INTO categories(name,emoji,position) VALUES(?,?,?)", (cn, em, pos)).lastrowid
         for pn, glyph, color, mode, vars_ in prods:
             pid = conn.execute("INSERT INTO products(category_id,name,description,glyph,color,mode) VALUES(?,?,?,?,?,?)",
-                               (cid, pn, "Demo description. Yahan activation steps likho.", glyph, color, mode)).lastrowid
+                               (cid, pn, "Demo description. Add activation steps here.", glyph, color, mode)).lastrowid
             for vn, price in vars_:
                 conn.execute("INSERT INTO variations(product_id,name,price,min_qty,max_qty,stock) VALUES(?,?,?,?,?,?)",
                              (pid, vn, db.to_cents(price), 1, 3, 5 if mode == "manual" else 0))

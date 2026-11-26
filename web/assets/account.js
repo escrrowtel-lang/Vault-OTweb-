@@ -14,25 +14,25 @@
   function authView() {
     var ref = ""; try { ref = localStorage.getItem("ref") || ""; } catch (e) {}
     root.innerHTML = '<div class="authbox card"><div class="tabs" id="at"><button class="tab on" data-m="login">Login</button><button class="tab" data-m="register">Sign up</button></div>' +
-      '<form class="form" id="af"><label class="fld" id="nm" hidden><span>Naam (optional)</span><input name="name" autocomplete="name"></label>' +
+      '<form class="form" id="af"><label class="fld" id="nm" hidden><span>Name (optional)</span><input name="name" autocomplete="name"></label>' +
       '<label class="fld"><span>Email</span><input name="email" type="email" required autocomplete="email"></label>' +
-      '<label class="fld"><span>Password</span><input name="password" type="password" required minlength="8" autocomplete="current-password"><small class="muted" id="pwh" hidden>Kam se kam 8 characters</small></label>' +
-      (ref ? '<small class="muted">Referral code laga hai: <b>' + esc(ref) + "</b></small>" : "") +
+      '<label class="fld"><span>Password</span><input name="password" type="password" required minlength="8" autocomplete="current-password"><small class="muted" id="pwh" hidden>At least 8 characters</small></label>' +
+      (ref ? '<small class="muted">Referral code applied: <b>' + esc(ref) + "</b></small>" : "") +
       '<button class="btn btn-primary" id="asub" type="submit">Login</button>' +
-      '<button class="btn btn-ghost btn-sm" id="fp" type="button">Password bhool gaye?</button></form></div>';
+      '<button class="btn btn-ghost btn-sm" id="fp" type="button">Forgot your password?</button></form></div>';
     var mode = "login";
     if (location.hash === "#register") setMode("register");
     function setMode(m) {
       mode = m;
       document.querySelectorAll("#at .tab").forEach(function (t) { t.classList.toggle("on", t.dataset.m === m); });
       $("#nm").hidden = m !== "register"; $("#pwh").hidden = m !== "register";
-      $("#asub").textContent = m === "register" ? "Account banao" : "Login";
+      $("#asub").textContent = m === "register" ? "Create account" : "Login";
       $("#af").elements.password.autocomplete = m === "register" ? "new-password" : "current-password";
     }
     $("#fp").onclick = function () {
-      C.formModal("Password reset", [{ k: "email", label: "Apna email", type: "email" }], { email: $("#af").elements.email.value }, function (v) {
+      C.formModal("Password reset", [{ k: "email", label: "Your email", type: "email" }], { email: $("#af").elements.email.value }, function (v) {
         return C.api("POST", "/api/auth/forgot", { email: v.email }).then(function () {
-          C.toast("Agar email setup hai to reset link bhej diya gaya. Warna support/admin se reset link maango.");
+          C.toast("If email is configured, a reset link has been sent. Otherwise, ask support for a reset link.");
         });
       });
     };
@@ -72,9 +72,9 @@
   function orders() {
     var pane = $("#pane"); pane.innerHTML = '<div class="skeleton"></div>';
     C.api("GET", "/api/orders").then(function (d) {
-      if (!d.orders.length) { pane.innerHTML = '<div class="empty">Abhi koi order nahi. <a href="plans.html"><u>Plans dekho</u></a></div>'; return; }
+      if (!d.orders.length) { pane.innerHTML = '<div class="empty">You have no orders yet. <a href="plans.html"><u>Browse plans</u></a></div>'; return; }
       pane.innerHTML = '<div class="olist">' + d.orders.map(function (o) {
-        var msg = o.status === "pending" ? "Pre-order: stock aate hi apne aap deliver hoga." : (o.status === "processing" ? "Admin team deliver karegi. Yahan details aa jayengi." : "");
+        var msg = o.status === "pending" ? "Pre-order: it will be delivered automatically when stock arrives." : (o.status === "processing" ? "Our team will deliver this order. The details will appear here." : "");
         return '<div class="card order"><div class="orow"><div><b>' + esc(o.product_name) + "</b> · " + esc(o.plan_name) + " × " + o.qty +
           '<div class="muted small">Order #' + o.id + " · " + dt(o.created_at) + '</div></div><div class="oright"><span class="badge ' + (ST[o.status] || "b-out") + '">' + esc(o.status) + "</span><b>" + money(o.total) + "</b></div></div>" +
           (o.delivery_text ? '<pre class="deliv">' + esc(o.delivery_text) + '</pre><button class="btn btn-ghost btn-sm" data-cp="' + o.id + '">Copy</button>' : (msg ? '<div class="note">' + msg + "</div>" : "")) + "</div>";
@@ -91,18 +91,18 @@
     Promise.all([C.api("GET", "/api/wallet"), C.api("GET", "/api/settings")]).then(function (r) {
       var w = r[0], s = r[1], rate = parseFloat(s.usd_inr_rate) || 100;
       var names = { upi: "UPI", binance_id: "Binance ID", usdt_bep20: "USDT (BEP20)" };
-      var html = '<div class="card"><h3>Wallet top-up</h3><p class="muted small">Limit $' + esc(s.min_deposit) + " se $" + esc(s.max_deposit) + ". Khareedari wallet balance se hoti hai.</p>";
-      if (!s.methods.length) html += '<div class="note">Top-up abhi band hai.</div>';
+      var html = '<div class="card"><h3>Wallet top-up</h3><p class="muted small">Limit: $' + esc(s.min_deposit) + " to $" + esc(s.max_deposit) + ". Purchases are paid from your wallet balance.</p>";
+      if (!s.methods.length) html += '<div class="note">Top-ups are currently unavailable.</div>';
       else {
         html += '<div class="tabs" id="mt" style="margin:14px 0">' + s.methods.map(function (m, i) { return '<button class="tab' + (i ? "" : " on") + '" data-m="' + m + '">' + names[m] + "</button>"; }).join("") + '</div><div id="mpane"></div>';
       }
       html += "</div>";
       html += '<div class="card" style="margin-top:18px"><h3>Deposits</h3>' + (w.deposits.length ? '<div class="tbl"><table><tr><th>Date</th><th>Method</th><th>Amount</th><th>Reference</th><th>Status</th></tr>' + w.deposits.map(function (d) {
         return "<tr><td>" + dt(d.created_at) + "</td><td>" + esc(names[d.method] || d.method) + "</td><td>" + money(d.amount) + '</td><td class="mono">' + esc(d.reference.slice(0, 18)) + (d.reference.length > 18 ? "…" : "") + '</td><td><span class="badge ' + (d.status === "approved" ? "b-in" : d.status === "pending" ? "b-low" : "b-out") + '">' + d.status + "</span>" + (d.note ? "<br><small>" + esc(d.note) + "</small>" : "") + "</td></tr>";
-      }).join("") + "</table></div>" : '<p class="muted">Abhi koi deposit nahi.</p>') + "</div>";
+      }).join("") + "</table></div>" : '<p class="muted">No deposits yet.</p>') + "</div>";
       html += '<div class="card" style="margin-top:18px"><h3>Wallet history</h3>' + (w.ledger.length ? '<div class="tbl"><table><tr><th>Date</th><th>Type</th><th>Amount</th><th>Balance</th></tr>' + w.ledger.map(function (l) {
         return "<tr><td>" + dt(l.created_at) + "</td><td>" + esc(l.reason) + '</td><td class="' + (l.delta < 0 ? "neg" : "pos") + '">' + (l.delta < 0 ? "−" : "+") + money(Math.abs(l.delta)) + "</td><td>" + money(l.balance_after) + "</td></tr>";
-      }).join("") + "</table></div>" : '<p class="muted">Abhi kuch nahi.</p>') + "</div>";
+      }).join("") + "</table></div>" : '<p class="muted">Nothing here yet.</p>') + "</div>";
       pane.innerHTML = html;
       if (s.methods.length) {
         var mp = $("#mpane");
@@ -118,19 +118,19 @@
   }
 
   function topup(el, m, s, rate) {
-    var done = function () { C.toast("Submit ho gaya"); C.me(true).then(function () { location.reload(); }); };
+    var done = function () { C.toast("Submitted"); C.me(true).then(function () { location.reload(); }); };
     if (m === "upi" || m === "binance_id") {
       var upi = m === "upi";
       var dest = upi ? s.upi_id : s.binance_id;
-      if (!dest) { el.innerHTML = '<div class="note">Ye method abhi set nahi hai.</div>'; return; }
-      el.innerHTML = '<ol class="steps"><li>Neeche amount (USD) daalo' + (upi ? " — INR amount dikhega" : "") + ".</li><li>" + (upi ? "Is UPI ID par pay karo" : "Is Binance ID par transfer karo") + ': <b class="mono">' + esc(dest) + "</b> " + (upi && s.upi_name ? "(" + esc(s.upi_name) + ")" : "") + ' <button class="btn btn-ghost btn-sm" id="cpd">Copy</button></li><li>' +
-        (upi ? "Payment ka 12-digit <b>UTR</b>" : "Binance ka <b>Transaction / Order ID</b>") + " yahan daalo. " + ((upi ? s.upi_auto : s.binance_auto) ? "Payment verify hote hi wallet mein <b>apne aap</b> add ho jaayega (1-2 min lag sakte hain)." : "Admin verify karke wallet mein add karega.") + "</li></ol>" +
+      if (!dest) { el.innerHTML = '<div class="note">This method is not available right now.</div>'; return; }
+      el.innerHTML = '<ol class="steps"><li>Enter the amount (USD) below' + (upi ? " — the INR amount is shown" : "") + ".</li><li>" + (upi ? "Pay to this UPI ID" : "Transfer to this Binance ID") + ': <b class="mono">' + esc(dest) + "</b> " + (upi && s.upi_name ? "(" + esc(s.upi_name) + ")" : "") + ' <button class="btn btn-ghost btn-sm" id="cpd">Copy</button></li><li>' +
+        (upi ? "Enter the 12-digit <b>UTR</b> of your payment" : "Enter the Binance <b>Transaction / Order ID</b>") + " here. " + ((upi ? s.upi_auto : s.binance_auto) ? "Your wallet is credited <b>automatically</b> once the payment is verified (usually within 1–2 minutes)." : "An admin will verify it and credit your wallet.") + "</li></ol>" +
         '<form class="form" id="tf"><label class="fld"><span>Amount (USD)</span><input name="amount" type="number" step="0.01" min="' + esc(s.min_deposit) + '" max="' + esc(s.max_deposit) + '" required></label>' +
-        (upi ? '<div class="note" id="inr">Pay karne ka amount: ₹—</div>' : "") +
+        (upi ? '<div class="note" id="inr">Amount to pay: ₹—</div>' : "") +
         '<label class="fld"><span>' + (upi ? "UTR (12 digit)" : "Binance Transaction/Order ID") + '</span><input name="reference" required autocomplete="off"></label><button class="btn btn-primary" type="submit">Submit for verification</button></form>';
       $("#cpd", el).onclick = function () { C.copy(dest); };
       var f = $("#tf", el);
-      if (upi) f.elements.amount.oninput = function () { $("#inr", el).textContent = "Pay karne ka amount: ₹" + ((parseFloat(f.elements.amount.value) || 0) * rate).toFixed(2); };
+      if (upi) f.elements.amount.oninput = function () { $("#inr", el).textContent = "Amount to pay: ₹" + ((parseFloat(f.elements.amount.value) || 0) * rate).toFixed(2); };
       f.onsubmit = function (e) {
         e.preventDefault();
         C.busy($("button", f), function () { return C.api("POST", "/api/deposits", { method: m, amount: f.elements.amount.value, reference: f.elements.reference.value.trim() }).then(done); });
@@ -138,12 +138,12 @@
       return;
     }
     /* USDT BEP20 (automatic) */
-    if (!s.usdt_address) { el.innerHTML = '<div class="note">Ye method abhi set nahi hai.</div>'; return; }
-    el.innerHTML = '<ol class="steps"><li>Amount (USD) daalo aur <b>exact USDT amount</b> lo.</li><li>Sirf <b>BEP20 (BNB Smart Chain)</b> par, <b>exact utna hi USDT</b> neeche wale address par bhejo.</li><li>Transaction hash yahan daalo. Blockchain par confirm hote hi balance <b>turant</b> add ho jata hai.</li></ol>' +
+    if (!s.usdt_address) { el.innerHTML = '<div class="note">This method is not available right now.</div>'; return; }
+    el.innerHTML = '<ol class="steps"><li>Enter the amount (USD) to get your <b>exact USDT amount</b>.</li><li>Send <b>exactly that amount</b> of USDT to the address below, on the <b>BEP20 (BNB Smart Chain)</b> network only.</li><li>Paste the transaction hash here. Your balance is credited <b>instantly</b> once the transaction is confirmed on the blockchain.</li></ol>' +
       '<form class="form" id="i1"><label class="fld"><span>Amount (USD)</span><input name="amount" type="number" step="0.01" min="' + esc(s.min_deposit) + '" max="' + esc(s.max_deposit) + '" required></label><button class="btn btn-ghost" type="submit">Exact amount lo</button></form>' +
-      '<div id="i2" hidden class="card inner"><p>Ye <b>exact</b> amount bhejo (2 ghante tak valid):</p><div class="big mono" id="ex"></div><p>Address (BEP20):</p><div class="mono addr" id="ad">' + esc(s.usdt_address) + '</div><button class="btn btn-ghost btn-sm" id="cpa">Copy address</button>' +
+      '<div id="i2" hidden class="card inner"><p>Send this <b>exact</b> amount (valid for 2 hours):</p><div class="big mono" id="ex"></div><p>Address (BEP20):</p><div class="mono addr" id="ad">' + esc(s.usdt_address) + '</div><button class="btn btn-ghost btn-sm" id="cpa">Copy address</button>' +
       '<form class="form" id="i3" style="margin-top:14px"><label class="fld"><span>Transaction hash</span><input name="reference" placeholder="0x…" required autocomplete="off"></label><button class="btn btn-primary" type="submit">Verify &amp; add balance</button></form>' +
-      '<small class="muted">Galat amount ya galat network par bheja to paisa auto add nahi hoga; support se baat karo.</small></div>';
+      '<small class="muted">If you send a different amount or use the wrong network, the payment will not be credited automatically. Please contact support.</small></div>';
     $("#i1", el).onsubmit = function (e) {
       e.preventDefault();
       C.busy($("#i1 button", el), function () {
@@ -163,7 +163,7 @@
     var pane = $("#pane"); pane.innerHTML = '<div class="skeleton"></div>';
     C.api("GET", "/api/referral").then(function (d) {
       var link = location.origin + "/account.html?ref=" + d.code + "#register";
-      pane.innerHTML = '<div class="card"><h3>Dost ko bulao, reward pao</h3><p class="muted">Aapka link se aaya naya user jab apna <b>pehla deposit</b> karta hai, aapko <b>$' + esc(d.reward) + "</b> wallet mein milta hai.</p>" +
+      pane.innerHTML = '<div class="card"><h3>Invite friends, earn rewards</h3><p class="muted">When someone who signed up with your link makes their <b>first deposit</b>, you receive <b>$' + esc(d.reward) + "</b> in your wallet.</p>" +
         '<div class="addr mono" id="rl">' + esc(link) + '</div><button class="btn btn-primary btn-sm" id="cr" style="margin-top:10px">Copy link</button>' +
         '<div class="stats3"><div><b>' + d.invited + "</b><small>Invited</small></div><div><b>" + d.rewarded + "</b><small>Rewarded</small></div><div><b>" + money(d.earned) + "</b><small>Earned</small></div></div></div>";
       $("#cr").onclick = function () { C.copy(link); };

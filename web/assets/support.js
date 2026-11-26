@@ -3,7 +3,7 @@ Core.api("GET", "/api/settings").then(function (s) {
   var u = (s.support_url || "").trim();
   if (/^(https?:\/\/|mailto:|tel:)/i.test(u)) {
     var a = document.createElement("a");
-    a.className = "btn btn-grad"; a.textContent = "Support se baat karo"; a.href = u; a.rel = "noopener";
+    a.className = "btn btn-primary"; a.textContent = "Contact support"; a.href = u; a.rel = "noopener";
     if (/^https?:/i.test(u)) a.target = "_blank";
     document.getElementById("sbtn").appendChild(a);
   }

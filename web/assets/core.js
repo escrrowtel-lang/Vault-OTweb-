@@ -17,7 +17,7 @@
       body: body === undefined ? undefined : JSON.stringify(body)
     }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (d) {
-        if (!r.ok) { var e = new Error(d.error || "Kuch galat hua"); e.status = r.status; throw e; }
+        if (!r.ok) { var e = new Error(d.error || "Something went wrong"); e.status = r.status; throw e; }
         return d;
       });
     });
@@ -80,8 +80,8 @@
     return { el: $(".modal", o), close: close };
   }
   function copy(text) {
-    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { toast("Copy ho gaya"); },
-      function () { toast("Copy nahi hua, select karke copy karo", true); });
+    (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(function () { toast("Copied"); },
+      function () { toast("Could not copy. Please select and copy manually", true); });
   }
   function busy(btn, fn) {
     btn.disabled = true;
@@ -101,7 +101,7 @@
         return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(v) ? " selected" : "") + ">" + esc(o[1]) + "</option>";
       }).join("") + "</select>";
       else if (f.type === "checkbox") html += '<input type="checkbox" name="' + f.k + '"' + (Number(v) || v === true ? " checked" : "") + ">";
-      else if (f.type === "image") html += '<input type="hidden" name="' + f.k + '" value="' + esc(v) + '"><input type="file" accept="image/png,image/jpeg,image/webp" data-up="' + f.k + '"><small class="muted upmsg">' + (v ? "Image set: " + esc(v) : "Koi image nahi (icon glyph use hoga)") + "</small>";
+      else if (f.type === "image") html += '<input type="hidden" name="' + f.k + '" value="' + esc(v) + '"><input type="file" accept="image/png,image/jpeg,image/webp" data-up="' + f.k + '"><small class="muted upmsg">' + (v ? "Image set: " + esc(v) : "No image (the icon glyph will be used)") + "</small>";
       else html += '<input name="' + f.k + '" type="' + (f.type || "text") + '" value="' + esc(v) + '"' + (f.step ? ' step="' + f.step + '"' : "") + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : "") + ">";
       if (f.help) html += "<small class=\"muted\">" + esc(f.help) + "</small>";
       html += "</label>";
@@ -112,7 +112,7 @@
     form.querySelectorAll("[data-up]").forEach(function (inp) {
       inp.onchange = function () {
         var file = inp.files[0]; if (!file) return;
-        if (file.size > 1000000) { toast("Image 1MB se chhoti ho", true); return; }
+        if (file.size > 1000000) { toast("Image must be under 1 MB", true); return; }
         var rd = new FileReader();
         rd.onload = function () {
           api("POST", "/api/admin/upload", { data: String(rd.result).split(",")[1] }).then(function (d) {
@@ -155,7 +155,7 @@
       '<div><h4>Shop</h4><a href="plans.html">All plans</a><a href="how-it-works.html">How it works</a><a href="account.html#wallet">Wallet &amp; top-up</a><a href="account.html#referral">Referral</a></div>' +
       '<div><h4>Help</h4><a href="faq.html">FAQ</a><a href="support.html">Support</a><a href="delivery.html">Delivery</a></div>' +
       '<div><h4>Legal</h4><a href="refund-policy.html">Refund policy</a><a href="terms.html">Terms</a><a href="privacy.html">Privacy</a></div></div>' +
-      '<div class="legal">© ' + new Date().getFullYear() + " " + esc(S.BRAND) + ". Hum kisi bhi brand ke saath affiliated nahi hain; saare naam aur trademarks unke maalikon ke hain. Sirf naam text mein use hote hain.</div></div></footer>";
+      '<div class="legal">© ' + new Date().getFullYear() + " " + esc(S.BRAND) + ". We are not affiliated with any brand. All names and trademarks belong to their respective owners and are used as text only.</div></div></footer>";
     var el = $("#site-footer"); if (el) el.outerHTML = f;
   }
   var ready = me().then(function (u) { renderHeader(u); renderFooter(); return u; });

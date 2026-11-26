@@ -31,14 +31,14 @@ def _ref_code(conn):
 def create_user(conn, email, password, name="", ref="", is_admin=0):
     email = (email or "").strip().lower()
     if not EMAIL_RE.match(email):
-        raise ApiError(400, "Email sahi nahi hai")
+        raise ApiError(400, "Invalid email address")
     if len(password or "") < 8 or len(password) > 200:
-        raise ApiError(400, "Password kam se kam 8 characters ka ho")
+        raise ApiError(400, "Password must be at least 8 characters")
     salt = secrets.token_bytes(16)
     ph = _hash(password, salt)
     with tx(conn):
         if conn.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
-            raise ApiError(409, "Ye email pehle se registered hai")
+            raise ApiError(409, "This email is already registered")
         referrer = None
         if ref:
             r = conn.execute("SELECT id FROM users WHERE ref_code=?", (ref.strip().upper(),)).fetchone()
@@ -57,9 +57,9 @@ def login(conn, email, password):
     salt = u["pass_salt"] if u else b"\0" * 16
     ph = _hash(password or "", salt)
     if not u or not hmac.compare_digest(ph, u["pass_hash"]):
-        raise ApiError(401, "Email ya password galat hai")
+        raise ApiError(401, "Incorrect email or password")
     if u["blocked"]:
-        raise ApiError(403, "Ye account block hai")
+        raise ApiError(403, "This account has been blocked")
     token = secrets.token_urlsafe(32)
     conn.execute("INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
                  (hashlib.sha256(token.encode()).hexdigest(), u["id"], now() + SESSION_TTL))
@@ -99,14 +99,14 @@ def make_reset_token(conn, user_id):
 
 def reset_password(conn, token, password):
     if len(password or "") < 8 or len(password) > 200:
-        raise ApiError(400, "Password kam se kam 8 characters ka ho")
+        raise ApiError(400, "Password must be at least 8 characters")
     th = hashlib.sha256((token or "").encode()).hexdigest()
     salt = secrets.token_bytes(16)
     ph = _hash(password, salt)
     with tx(conn):
         row = conn.execute("SELECT user_id FROM password_resets WHERE token_hash=? AND expires_at>?", (th, now())).fetchone()
         if not row:
-            raise ApiError(400, "Reset link galat ya expire ho gaya")
+            raise ApiError(400, "This reset link is invalid or has expired")
         # token sirf ek baar chalta hai
         conn.execute("DELETE FROM password_resets WHERE token_hash=?", (th,))
         conn.execute("UPDATE users SET pass_hash=?, pass_salt=? WHERE id=?", (ph, salt, row["user_id"]))
@@ -120,7 +120,7 @@ def credit(conn, user_id, delta, reason, ref=""):
     row = conn.execute("SELECT balance FROM users WHERE id=?", (user_id,)).fetchone()
     nb = row["balance"] + delta
     if nb < 0:
-        raise ApiError(402, "Balance kam hai")
+        raise ApiError(402, "Insufficient balance")
     conn.execute("UPDATE users SET balance=? WHERE id=?", (nb, user_id))
     conn.execute("INSERT INTO ledger(user_id,delta,reason,ref,balance_after,created_at) VALUES(?,?,?,?,?,?)",
                  (user_id, delta, reason, str(ref), nb, now()))
@@ -161,9 +161,9 @@ def _find_coupon(conn, code, user_id):
         return None
     c = conn.execute("SELECT * FROM coupons WHERE code=? AND active=1", (code,)).fetchone()
     if not c or c["uses"] >= c["max_uses"]:
-        raise ApiError(400, "Coupon sahi nahi hai ya use ho chuka hai")
+        raise ApiError(400, "This coupon is invalid or has already been used up")
     if conn.execute("SELECT 1 FROM coupon_uses WHERE coupon_id=? AND user_id=?", (c["id"], user_id)).fetchone():
-        raise ApiError(400, "Ye coupon aap pehle use kar chuke ho")
+        raise ApiError(400, "You have already used this coupon")
     return c
 
 
@@ -197,34 +197,34 @@ def buy(conn, user_id, variation_id, qty, coupon_code=""):
         qty = int(qty)
         variation_id = int(variation_id)
     except (TypeError, ValueError):
-        raise ApiError(400, "Request sahi nahi hai")
+        raise ApiError(400, "Invalid request")
     with tx(conn):
         u = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         if not u or u["blocked"]:
-            raise ApiError(403, "Account block hai")
+            raise ApiError(403, "This account has been blocked")
         v = conn.execute(
             "SELECT v.*, p.name pname, p.mode, p.active pa, p.id pid, c.active ca FROM variations v "
             "JOIN products p ON p.id=v.product_id JOIN categories c ON c.id=p.category_id WHERE v.id=?",
             (variation_id,)).fetchone()
         if not v or not (v["active"] and v["pa"] and v["ca"]):
-            raise ApiError(404, "Ye plan available nahi hai")
+            raise ApiError(404, "This plan is not available")
         if qty < v["min_qty"] or qty > v["max_qty"]:
-            raise ApiError(400, "Quantity %d se %d ke beech chuno" % (v["min_qty"], v["max_qty"]))
+            raise ApiError(400, "Choose a quantity between %d and %d" % (v["min_qty"], v["max_qty"]))
         stock = available(conn, variation_id, v["mode"])
         preorder = 0
         if v["mode"] == "auto":
             if stock == 0:
                 preorder = 1
             elif stock < qty:
-                raise ApiError(409, "Sirf %d available hain" % stock)
+                raise ApiError(409, "Only %d available" % stock)
         elif stock < qty:
-            raise ApiError(409, "Stock kam hai (%d bacha hai)" % stock)
+            raise ApiError(409, "Not enough stock (%d left)" % stock)
         gross = v["price"] * qty
         coupon = _find_coupon(conn, coupon_code, user_id)
         discount = gross * coupon["percent"] // 100 if coupon else 0
         total = gross - discount
         if u["balance"] < total:
-            raise ApiError(402, "Wallet balance kam hai. Pehle top-up karo")
+            raise ApiError(402, "Insufficient wallet balance. Please top up first")
         t = now()
         status = "pending" if preorder else ("completed" if v["mode"] == "auto" else "processing")
         cur = conn.execute(
@@ -265,9 +265,9 @@ def add_inventory(conn, variation_id, lines):
         v = conn.execute("SELECT v.id, p.mode, p.id pid FROM variations v JOIN products p ON p.id=v.product_id WHERE v.id=?",
                          (variation_id,)).fetchone()
         if not v:
-            raise ApiError(404, "Plan nahi mila")
+            raise ApiError(404, "Plan not found")
         if v["mode"] != "auto":
-            raise ApiError(400, "Inventory sirf AUTO plans ke liye hai. Manual plan mein stock number badlo")
+            raise ApiError(400, "Inventory is only for AUTO plans. For manual plans, edit the stock number")
         have = {r["content"] for r in conn.execute("SELECT content FROM inventory WHERE variation_id=?", (variation_id,))}
         added = skipped = 0
         for l in lines:
@@ -284,11 +284,11 @@ def add_inventory(conn, variation_id, lines):
 def deliver_manual(conn, order_id, text):
     text = (text or "").strip()
     if not text:
-        raise ApiError(400, "Delivery details likho")
+        raise ApiError(400, "Enter the delivery details")
     with tx(conn):
         o = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
         if not o or o["status"] != "processing":
-            raise ApiError(409, "Sirf 'processing' order deliver ho sakta hai")
+            raise ApiError(409, "Only orders in 'processing' can be delivered")
         conn.execute("UPDATE orders SET status='completed', delivery_text=?, updated_at=? WHERE id=?", (text, now(), order_id))
 
 
@@ -296,7 +296,7 @@ def refund_order(conn, order_id):
     with tx(conn):
         o = conn.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
         if not o or o["status"] in ("refunded", "cancelled"):
-            raise ApiError(409, "Ye order refund nahi ho sakta")
+            raise ApiError(409, "This order cannot be refunded")
         if o["status"] in ("pending", "processing") and o["mode"] == "manual":
             conn.execute("UPDATE variations SET stock=stock+? WHERE id=?", (o["qty"], o["variation_id"]))
         credit(conn, o["user_id"], o["total"], "refund", order_id)
@@ -316,7 +316,7 @@ def _reward_referrer(conn, user_id):
 def _check_limits(settings, cents):
     lo, hi = to_cents(settings["min_deposit"]), to_cents(settings["max_deposit"])
     if cents < lo or cents > hi:
-        raise ApiError(400, "Deposit $%s se $%s ke beech hona chahiye" % (settings["min_deposit"], settings["max_deposit"]))
+        raise ApiError(400, "Deposit must be between $%s and $%s" % (settings["min_deposit"], settings["max_deposit"]))
 
 
 INTENT_TTL = 2 * 3600
@@ -326,7 +326,7 @@ def create_crypto_intent(conn, user_id, amount):
     """User ko unique exact USDT amount deta hai, taaki tx hash sirf usi se match ho (doosra user claim na kar sake)."""
     settings = get_settings(conn)
     if "usdt_bep20" not in settings["methods_enabled"].split(","):
-        raise ApiError(400, "USDT payment abhi band hai")
+        raise ApiError(400, "USDT payments are currently unavailable")
     base = to_cents(amount)
     _check_limits(settings, base)
     with tx(conn):
@@ -340,23 +340,23 @@ def create_crypto_intent(conn, user_id, amount):
                 conn.execute("INSERT INTO crypto_intents(user_id,expected,created_at,expires_at) VALUES(?,?,?,?)",
                              (user_id, exp, t, t + INTENT_TTL))
                 return {"expected": "%d.%04d" % (exp // 10000, exp % 10000), "expires_in_minutes": INTENT_TTL // 60}
-        raise ApiError(503, "Abhi bahut requests hain, thodi der baad try karo")
+        raise ApiError(503, "The service is busy. Please try again shortly")
 
 
 def create_deposit(conn, user_id, method, amount, reference, rpc=payments.rpc_call):
     settings = get_settings(conn)
     if method not in settings["methods_enabled"].split(","):
-        raise ApiError(400, "Ye payment method abhi band hai")
+        raise ApiError(400, "This payment method is currently unavailable")
     ref = payments.validate_reference(method, reference)
     if conn.execute("SELECT 1 FROM deposits WHERE method=? AND reference=? AND status IN ('pending','approved')",
                     (method, ref)).fetchone():
-        raise ApiError(409, "Ye reference pehle se submit ho chuka hai")
+        raise ApiError(409, "This reference has already been submitted")
     units = None
     if method == "usdt_bep20":
         usdt = payments.verify_usdt_bep20(ref, settings, rpc)
         scaled = usdt * 10000
         if scaled != scaled.to_integral_value():
-            raise ApiError(400, "Amount exact match nahi hua. Bataya hua exact amount hi bhejna hota hai; support se baat karo")
+            raise ApiError(400, "The amount does not match exactly. You must send the exact amount shown; please contact support")
         units = int(scaled)
         cents = units // 100
         _check_limits_min_only(settings, cents)
@@ -370,13 +370,13 @@ def create_deposit(conn, user_id, method, amount, reference, rpc=payments.rpc_ca
             it = conn.execute("SELECT id FROM crypto_intents WHERE user_id=? AND expected=? AND used=0 AND expires_at>=?",
                               (user_id, units, now())).fetchone()
             if not it:
-                raise ApiError(409, "Ye payment aapki kisi active top-up request se match nahi hui. "
-                                    "Pehle 'USDT top-up' request banao aur bataya hua exact amount bhejo; "
-                                    "galti hui ho to support se baat karo")
+                raise ApiError(409, "This payment does not match any of your active top-up requests. "
+                                    "Create a USDT top-up request first and send the exact amount shown; "
+                                    "if you made a mistake, please contact support")
             conn.execute("UPDATE crypto_intents SET used=1 WHERE id=?", (it["id"],))
         if conn.execute("SELECT 1 FROM deposits WHERE method=? AND reference=? AND status IN ('pending','approved')",
                         (method, ref)).fetchone():
-            raise ApiError(409, "Ye reference pehle se submit ho chuka hai")
+            raise ApiError(409, "This reference has already been submitted")
         t = now()
         cur = conn.execute("INSERT INTO deposits(user_id,method,amount,reference,status,created_at,decided_at) VALUES(?,?,?,?,?,?,?)",
                            (user_id, method, cents, ref, status, t, t if status == "approved" else None))
@@ -388,16 +388,16 @@ def create_deposit(conn, user_id, method, amount, reference, rpc=payments.rpc_ca
 
 def _check_limits_min_only(settings, cents):
     if cents < to_cents(settings["min_deposit"]):
-        raise ApiError(400, "Minimum deposit $%s hai" % settings["min_deposit"])
+        raise ApiError(400, "The minimum deposit is $%s" % settings["min_deposit"])
 
 
 def decide_deposit(conn, deposit_id, action, note=""):
     if action not in ("approve", "reject"):
-        raise ApiError(400, "Action sahi nahi hai")
+        raise ApiError(400, "Invalid action")
     with tx(conn):
         d = conn.execute("SELECT * FROM deposits WHERE id=?", (deposit_id,)).fetchone()
         if not d or d["status"] != "pending":
-            raise ApiError(409, "Ye deposit pending nahi hai")
+            raise ApiError(409, "This deposit is not pending")
         st = "approved" if action == "approve" else "rejected"
         conn.execute("UPDATE deposits SET status=?, note=?, decided_at=? WHERE id=?", (st, (note or "")[:200], now(), deposit_id))
         if st == "approved":
