@@ -35,7 +35,7 @@ p{margin:0}
 .nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.92);backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line)}
 .nav .wrap{display:flex;align-items:center;gap:22px;height:68px}
 .logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;letter-spacing:-.02em}
-.logo i{width:30px;height:30px;border-radius:9px;background:var(--grad);display:grid;place-items:center;color:#fff;font-style:normal;font-size:15px}
+.logo img{width:34px;height:34px;display:block}
 .nav nav{display:flex;gap:6px;margin-left:auto;align-items:center}
 .nav nav a{padding:8px 13px;border-radius:10px;font-weight:600;font-size:15px;color:var(--ink-2)}
 .nav nav a:hover,.nav nav a.on{color:var(--ink);background:var(--soft)}

@@ -137,7 +137,7 @@
   var path = location.pathname.split("/").pop() || "index.html";
   var nav = [["plans.html", "Shop"], ["how-it-works.html", "How it works"], ["faq.html", "FAQ"], ["support.html", "Support"]];
   function renderHeader(user) {
-    var h = '<header class="nav"><div class="wrap"><a class="logo" href="index.html"><i>V</i><span id="brand-name">' + esc(S.BRAND) + "</span></a>" +
+    var h = '<header class="nav"><div class="wrap"><a class="logo" href="index.html"><img src="assets/logo.svg" alt="" width="34" height="34"><span id="brand-name">' + esc(S.BRAND) + "</span></a>" +
       '<button class="burger" aria-label="Menu" id="burger">☰</button><nav id="menu">' +
       nav.map(function (l) { return '<a href="' + l[0] + '"' + (path === l[0] ? ' class="on"' : "") + ">" + l[1] + "</a>"; }).join("") +
       (user ? ((user.is_admin ? '<a href="admin.html">Admin</a>' : "") + '<a class="btn btn-primary btn-sm" href="account.html">' + money(user.balance) + " · Account</a>")
@@ -146,7 +146,7 @@
     var b = $("#burger"); if (b) b.onclick = function () { $("#menu").classList.toggle("open"); };
   }
   function renderFooter() {
-    var f = '<footer><div class="wrap"><div class="fgrid"><div><a class="logo" href="index.html"><i>V</i>' + esc(S.BRAND) + "</a>" +
+    var f = '<footer><div class="wrap"><div class="fgrid"><div><a class="logo" href="index.html"><img src="assets/logo.svg" alt="" width="34" height="34">' + esc(S.BRAND) + "</a>" +
       '<p class="muted" style="margin-top:12px;max-width:280px">' + esc(S.TAGLINE) + ".</p></div>" +
       '<div><h4>Shop</h4><a href="plans.html">All plans</a><a href="how-it-works.html">How it works</a><a href="account.html#wallet">Wallet &amp; top-up</a><a href="account.html#referral">Referral</a></div>' +
       '<div><h4>Help</h4><a href="faq.html">FAQ</a><a href="support.html">Support</a><a href="delivery.html">Delivery</a></div>' +
