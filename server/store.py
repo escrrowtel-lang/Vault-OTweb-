@@ -114,6 +114,28 @@ def reset_password(conn, token, password):
     return row["user_id"]
 
 
+def update_profile(conn, user_id, name):
+    name = " ".join(str(name or "").split())[:60]
+    with tx(conn):
+        conn.execute("UPDATE users SET name=? WHERE id=?", (name, user_id))
+    return name
+
+
+def change_password(conn, user, current, new, keep_token=""):
+    """Current password check, then new hash; every other session is signed out."""
+    if not hmac.compare_digest(_hash(current or "", user["pass_salt"]), user["pass_hash"]):
+        raise ApiError(400, "Your current password is incorrect")
+    if len(new or "") < 8 or len(new) > 200:
+        raise ApiError(400, "Password must be at least 8 characters")
+    if new == current:
+        raise ApiError(400, "Choose a password different from the current one")
+    salt = secrets.token_bytes(16)
+    keep = hashlib.sha256(keep_token.encode()).hexdigest()
+    with tx(conn):
+        conn.execute("UPDATE users SET pass_hash=?, pass_salt=? WHERE id=?", (_hash(new, salt), salt, user["id"]))
+        conn.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (user["id"], keep))
+
+
 # ---------------------------------------------------------------- wallet
 def credit(conn, user_id, delta, reason, ref=""):
     """tx ke andar hi call karo."""

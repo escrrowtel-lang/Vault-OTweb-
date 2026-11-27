@@ -101,7 +101,7 @@ def api_settings(r):
 
 def _user_json(u):
     return {"id": u["id"], "email": u["email"], "name": u["name"], "is_admin": bool(u["is_admin"]),
-            "balance": u["balance"] / 100, "ref_code": u["ref_code"]}
+            "balance": u["balance"] / 100, "ref_code": u["ref_code"], "created_at": u["created_at"]}
 
 
 @route("POST", "/api/auth/register", "pub")
@@ -163,6 +163,21 @@ def api_me(r):
 
 
 # ============================================================ CUSTOMER
+@route("POST", "/api/profile")
+def api_profile(r):
+    name = store.update_profile(r.conn, r.user["id"], r.body.get("name", ""))
+    return {"name": name}
+
+
+@route("POST", "/api/auth/change-password")
+def api_change_password(r):
+    if limited(("chpw", r.user["id"]), 8, 3600):
+        raise ApiError(429, "Too many attempts. Please try again later")
+    cur, new = r.need("current", "password")
+    store.change_password(r.conn, r.user, str(cur), str(new), r.h.cookie_token())
+    return {"ok": True}
+
+
 @route("POST", "/api/coupon/check")
 def api_coupon(r):
     return {"percent": store.check_coupon(r.conn, r.user["id"], r.body.get("code", ""))}

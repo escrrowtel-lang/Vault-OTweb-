@@ -49,41 +49,105 @@
   }
 
   /* ---------- dashboard ---------- */
+  function initials(u) {
+    var t = (u.name || u.email || "?").trim();
+    var parts = t.split(/[\s@._-]+/).filter(Boolean);
+    return ((parts[0] || "?").charAt(0) + (parts.length > 1 ? parts[1].charAt(0) : "")).toUpperCase();
+  }
   function dash(u) {
-    root.innerHTML = '<div class="dhead"><div><h1 style="font-size:32px">Hi' + (u.name ? ", " + esc(u.name) : "") + '</h1><p class="muted">' + esc(u.email) + '</p></div>' +
-      '<div class="balbox"><small>Wallet balance</small><b>' + money(u.balance) + '</b></div></div>' +
-      '<div class="tabs" id="dt"><button class="tab" data-t="orders">Orders</button><button class="tab" data-t="wallet">Wallet &amp; top-up</button><button class="tab" data-t="referral">Referral</button>' +
-      '<button class="tab" id="lo" style="margin-left:auto">Logout</button></div><div id="pane"></div>';
+    root.innerHTML = '<div class="card profile"><div class="avatar">' + esc(initials(u)) + '</div><div class="pmain"><h1>' + esc(u.name || "My account") + '</h1><p class="muted">' + esc(u.email) +
+      (u.created_at ? " · Member since " + new Date(u.created_at * 1000).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "") + '</p></div>' +
+      '<div class="balbox"><small>Wallet balance</small><b>' + money(u.balance) + '</b><a class="btn btn-primary btn-sm" href="#wallet">Add funds</a></div></div>' +
+      '<div class="stats4" id="stats"></div>' +
+      '<div class="tabs" id="dt"><button class="tab" data-t="orders">My orders</button><button class="tab" data-t="wallet">Wallet &amp; top-up</button><button class="tab" data-t="profile">Profile</button><button class="tab" data-t="referral">Referral</button>' +
+      '<button class="tab" id="lo" style="margin-left:auto">Sign out</button></div><div id="pane"></div>';
     $("#lo").onclick = function () { C.api("POST", "/api/auth/logout", {}).then(function () { location.href = "index.html"; }); };
     $("#dt").onclick = function (e) { var t = e.target.closest("[data-t]"); if (t) { location.hash = t.dataset.t; } };
+    C.api("GET", "/api/orders").then(function (d) {
+      var o = d.orders, n = function (f) { return o.filter(f).length; };
+      var box = function (l, v, c) { return '<div class="card sbox ' + c + '"><b>' + v + "</b><small>" + l + "</small></div>"; };
+      $("#stats").innerHTML = box("Total orders", o.length, "") + box("In progress", n(function (x) { return x.status === "pending" || x.status === "processing"; }), "warn") +
+        box("Delivered", n(function (x) { return x.status === "completed"; }), "ok") + box("Total spent", money(o.filter(function (x) { return x.status === "completed" || x.status === "processing" || x.status === "pending"; }).reduce(function (a, x) { return a + x.total; }, 0)), "");
+    }).catch(function () {});
     function show() {
       var t = (location.hash || "#orders").slice(1);
-      if (["orders", "wallet", "referral"].indexOf(t) < 0) t = "orders";
+      if (["orders", "wallet", "profile", "referral"].indexOf(t) < 0) t = "orders";
       document.querySelectorAll("#dt [data-t]").forEach(function (b) { b.classList.toggle("on", b.dataset.t === t); });
-      ({ orders: orders, wallet: wallet, referral: referral })[t]();
+      ({ orders: orders, wallet: wallet, profile: function () { profile(u); }, referral: referral })[t]();
     }
     window.addEventListener("hashchange", show);
     show();
   }
 
   var ST = { pending: "b-pre", processing: "b-low", completed: "b-in", cancelled: "b-out", refunded: "b-out" };
+  var LABEL = { pending: "Waiting for stock", processing: "Processing", completed: "Delivered", cancelled: "Cancelled", refunded: "Refunded" };
   function dt(ts) { return new Date(ts * 1000).toLocaleString(); }
+
+  /* order progress tracker: Placed -> Processing/Waiting -> Delivered */
+  function tracker(o) {
+    var steps = [["Order placed", o.created_at]];
+    var cls = ["done"];
+    if (o.status === "cancelled" || o.status === "refunded") {
+      steps.push([o.status === "refunded" ? "Refunded to wallet" : "Cancelled", o.updated_at]); cls.push("bad");
+    } else {
+      steps.push([o.status === "pending" ? "Waiting for stock" : "Being prepared", o.status === "completed" ? o.created_at : 0]);
+      cls.push(o.status === "completed" ? "done" : "now");
+      steps.push(["Delivered", o.status === "completed" ? o.updated_at : 0]);
+      cls.push(o.status === "completed" ? "done" : "");
+    }
+    return '<ol class="track">' + steps.map(function (x, i) {
+      return '<li class="' + cls[i] + '"><i></i><b>' + x[0] + "</b><small>" + (x[1] ? dt(x[1]) : "") + "</small></li>";
+    }).join("") + "</ol>";
+  }
 
   function orders() {
     var pane = $("#pane"); pane.innerHTML = '<div class="skeleton"></div>';
     C.api("GET", "/api/orders").then(function (d) {
       if (!d.orders.length) { pane.innerHTML = '<div class="empty">You have no orders yet. <a href="plans.html"><u>Browse plans</u></a></div>'; return; }
-      pane.innerHTML = '<div class="olist">' + d.orders.map(function (o) {
-        var msg = o.status === "pending" ? "Pre-order: it will be delivered automatically when stock arrives." : (o.status === "processing" ? "Our team will deliver this order. The details will appear here." : "");
-        return '<div class="card order"><div class="orow"><div><b>' + esc(o.product_name) + "</b> · " + esc(o.plan_name) + " × " + o.qty +
-          '<div class="muted small">Order #' + o.id + " · " + dt(o.created_at) + '</div></div><div class="oright"><span class="badge ' + (ST[o.status] || "b-out") + '">' + esc(o.status) + "</span><b>" + money(o.total) + "</b></div></div>" +
-          (o.delivery_text ? '<pre class="deliv">' + esc(o.delivery_text) + '</pre><button class="btn btn-ghost btn-sm" data-cp="' + o.id + '">Copy</button>' : (msg ? '<div class="note">' + msg + "</div>" : "")) + "</div>";
-      }).join("") + "</div>";
+      var f = "all";
+      var draw = function () {
+        var list = d.orders.filter(function (o) { return f === "all" || (f === "active" ? (o.status === "pending" || o.status === "processing") : f === "done" ? o.status === "completed" : (o.status === "cancelled" || o.status === "refunded")); });
+        var chips = [["all", "All"], ["active", "In progress"], ["done", "Delivered"], ["closed", "Cancelled / refunded"]];
+        pane.innerHTML = '<div class="tabs" id="of" style="margin-bottom:16px">' + chips.map(function (c) { return '<button class="tab' + (c[0] === f ? " on" : "") + '" data-f="' + c[0] + '">' + c[1] + "</button>"; }).join("") + "</div>" +
+          (list.length ? '<div class="olist">' + list.map(function (o) {
+            var msg = o.status === "pending" ? "This is a pre-order. It will be delivered automatically when stock arrives." : (o.status === "processing" ? "Our team is preparing your order. The details will appear here once it is delivered." : "");
+            return '<div class="card order"><div class="orow"><div><b>' + esc(o.product_name) + "</b> · " + esc(o.plan_name) + " × " + o.qty +
+              '<div class="muted small">Order #' + o.id + " · " + dt(o.created_at) + (o.coupon_code ? " · Coupon " + esc(o.coupon_code) : "") + '</div></div><div class="oright"><span class="badge ' + (ST[o.status] || "b-out") + '">' + (LABEL[o.status] || esc(o.status)) + "</span><b>" + money(o.total) + "</b></div></div>" +
+              tracker(o) +
+              (o.delivery_text ? '<pre class="deliv">' + esc(o.delivery_text) + '</pre><button class="btn btn-ghost btn-sm" data-cp="' + o.id + '">Copy details</button>' : (msg ? '<div class="note">' + msg + "</div>" : "")) + "</div>";
+          }).join("") + "</div>" : '<div class="empty">No orders in this view.</div>');
+        $("#of").onclick = function (e) { var b = e.target.closest("[data-f]"); if (b) { f = b.dataset.f; draw(); } };
+      };
+      draw();
       pane.onclick = function (e) {
         var b = e.target.closest("[data-cp]"); if (!b) return;
         var o = d.orders.filter(function (x) { return String(x.id) === b.dataset.cp; })[0]; C.copy(o.delivery_text);
       };
     }).catch(function (e) { pane.innerHTML = '<div class="empty">' + esc(e.message) + "</div>"; });
+  }
+
+  function profile(u) {
+    var pane = $("#pane");
+    pane.innerHTML = '<div class="grid g-2"><div class="card"><h3>Profile</h3><form class="form" id="pf" style="margin-top:14px">' +
+      '<label class="fld"><span>Name</span><input name="name" maxlength="60" value="' + esc(u.name || "") + '" autocomplete="name"></label>' +
+      '<label class="fld"><span>Email</span><input value="' + esc(u.email) + '" disabled></label><button class="btn btn-primary" type="submit">Save changes</button></form></div>' +
+      '<div class="card"><h3>Change password</h3><form class="form" id="cf" style="margin-top:14px">' +
+      '<label class="fld"><span>Current password</span><input name="current" type="password" required autocomplete="current-password"></label>' +
+      '<label class="fld"><span>New password</span><input name="password" type="password" required minlength="8" autocomplete="new-password"><small class="muted">At least 8 characters. Other devices will be signed out.</small></label>' +
+      '<button class="btn btn-primary" type="submit">Update password</button></form></div></div>';
+    $("#pf").onsubmit = function (e) {
+      e.preventDefault();
+      C.busy($("button", e.target), function () {
+        return C.api("POST", "/api/profile", { name: e.target.elements.name.value }).then(function () { C.toast("Profile updated"); C.me(true).then(function () { location.reload(); }); });
+      });
+    };
+    $("#cf").onsubmit = function (e) {
+      e.preventDefault();
+      var f = e.target.elements;
+      C.busy($("button", e.target), function () {
+        return C.api("POST", "/api/auth/change-password", { current: f.current.value, password: f.password.value }).then(function () { C.toast("Password updated"); e.target.reset(); });
+      });
+    };
   }
 
   function wallet() {

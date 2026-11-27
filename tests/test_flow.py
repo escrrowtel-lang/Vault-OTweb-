@@ -371,6 +371,21 @@ class Reset(unittest.TestCase):
         self.assertEqual((len(row["action"]), len(row["detail"])), (40, 300))
 
 
+class Profile(unittest.TestCase):
+    def test_change_password_and_name(self):
+        uid = mk("prof@example.com")
+        u = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+        with self.assertRaises(ApiError):
+            store.change_password(conn, u, "wrong-pass", "newpassword1")
+        with self.assertRaises(ApiError):
+            store.change_password(conn, u, "password123", "short")
+        store.change_password(conn, u, "password123", "newpassword1")
+        store.login(conn, "prof@example.com", "newpassword1")
+        with self.assertRaises(ApiError):
+            store.login(conn, "prof@example.com", "password123")
+        self.assertEqual(store.update_profile(conn, uid, "  Asha   K  "), "Asha K")
+
+
 class AutoPay(unittest.TestCase):
     BANK = ("Subject: Credited\nDear customer, Rs. 500.00 has been credited to your account "
             "via UPI. UPI Ref No 412345678901. Thank you.")
