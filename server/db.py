@@ -144,6 +144,15 @@ CREATE TABLE IF NOT EXISTS suppliers(
   active INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS supplier_items(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+  external_id TEXT NOT NULL,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  variation_id INTEGER NOT NULL REFERENCES variations(id),
+  cost INTEGER NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS supplier_items_ext ON supplier_items(supplier_id, external_id);
 CREATE TABLE IF NOT EXISTS incoming(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,

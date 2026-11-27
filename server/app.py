@@ -545,6 +545,36 @@ def adm_supplier_test(r):
     return suppliers.test(row, str(r.body.get("path", "/")))
 
 
+@route("POST", "/api/admin/supplier/discover", "admin")
+def adm_supplier_discover(r):
+    if limited(("supdisc", r.user["id"]), 6, 60):
+        raise ApiError(429, "Please wait a moment and try again")
+    row = r.conn.execute("SELECT * FROM suppliers WHERE id=?", (_int(r.need("id")[0]),)).fetchone()
+    if not row:
+        raise ApiError(404, "Supplier not found")
+    return {"found": suppliers.discover(row)}
+
+
+@route("POST", "/api/admin/supplier/import", "admin")
+def adm_supplier_import(r):
+    if limited(("supimp", r.user["id"]), 10, 60):
+        raise ApiError(429, "Please wait a moment and try again")
+    row = r.conn.execute("SELECT * FROM suppliers WHERE id=?", (_int(r.need("id")[0]),)).fetchone()
+    if not row:
+        raise ApiError(404, "Supplier not found")
+    try:
+        markup = float(r.body.get("markup", 0))
+    except (TypeError, ValueError):
+        markup = -1
+    if not 0 <= markup <= 1000:
+        raise ApiError(400, "Markup must be between 0 and 1000 percent")
+    dry = bool(r.body.get("dry", True))
+    out = suppliers.import_catalog(r.conn, row, str(r.body.get("path", "")), markup, bool(r.body.get("cents")), dry)
+    if not dry:
+        store.audit(r.conn, r.user["id"], "supplier_import", "supplier #%s: %d new, %d updated" % (row["id"], out["created"], out["updated"]))
+    return out
+
+
 @route("GET", "/api/admin/settings", "admin")
 def adm_settings_get(r):
     return {"settings": get_settings(r.conn)}

@@ -189,7 +189,7 @@
       el.innerHTML = '<div class="bar"><button class="btn btn-primary btn-sm" id="ns">+ Add supplier</button></div>' +
         (d.suppliers.length ? '<div class="tbl card"><table><tr><th>Name</th><th>Base URL</th><th>Key</th><th>Status</th><th></th></tr>' + d.suppliers.map(function (x) {
           return "<tr><td>" + esc(x.name) + '</td><td class="mono wrapc">' + esc(x.base_url) + '</td><td class="mono">' + (x.has_key ? esc(x.key_hint) : '<span class="muted">none</span>') + '</td><td><span class="badge ' + (x.active ? "b-in" : "b-out") + '">' + (x.active ? "enabled" : "off") + '</span></td><td>' +
-            '<button class="btn btn-ghost btn-sm" data-a="test" data-id="' + x.id + '">Test</button> <button class="btn btn-ghost btn-sm" data-a="edit" data-id="' + x.id + '">Edit</button> <button class="btn btn-ghost btn-sm" data-a="del" data-id="' + x.id + '">Delete</button></td></tr>';
+            '<button class="btn btn-primary btn-sm" data-a="imp" data-id="' + x.id + '">Import products</button> <button class="btn btn-ghost btn-sm" data-a="test" data-id="' + x.id + '">Test</button> <button class="btn btn-ghost btn-sm" data-a="edit" data-id="' + x.id + '">Edit</button> <button class="btn btn-ghost btn-sm" data-a="del" data-id="' + x.id + '">Delete</button></td></tr>';
         }).join("") + "</table></div>" : '<div class="empty">No supplier connected yet.</div>') +
         '<p class="muted small" style="margin-top:12px">Add the API key given by your supplier. Use Test to check the connection: it sends one read-only GET request (for example /v1/balance) and shows the response. Keys are stored on the server and are never displayed again.</p>';
       $("#ns", el).onclick = function () { C.formModal("Add supplier", F(false), {}, function (v) { return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); }); };
@@ -198,14 +198,53 @@
         var id = parseInt(b.dataset.id, 10), x = d.suppliers.filter(function (s) { return s.id === id; })[0];
         if (b.dataset.a === "edit") C.formModal("Edit supplier", F(true), x, function (v) { v.id = id; return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); });
         else if (b.dataset.a === "del") { if (confirm("Delete " + x.name + " and its saved key?")) P("/api/admin/supplier/delete", { id: id }).then(function () { ok("Deleted"); reload(); }); }
+        else if (b.dataset.a === "imp") importFlow(x);
         else C.formModal("Test " + x.name, [{ k: "path", label: "Path to call (GET)", def: "/v1/balance" }], { path: "/v1/balance" }, function (v) {
           return P("/api/admin/supplier/test", { id: id, path: v.path }).then(function (t) {
-            C.modal("<h3>Response " + t.status + (t.ok ? " ✓" : "") + '</h3><p class="muted small">' + esc(t.content_type) + (t.keys ? " · keys: " + esc(Array.isArray(t.keys) ? t.keys.join(", ") : t.keys) : "") + '</p><pre class="deliv">' + esc(t.preview) + "</pre>", { wide: true });
+            C.modal("<h3>Response " + t.status + (t.ok ? " ✓" : "") + '</h3>' + (t.status === 404 ? '<div class="note">This path does not exist on the supplier. Use <b>Import products</b> to search for the catalog path automatically, or check the base URL (many suppliers use a prefix such as /api/reseller).</div>' : "") + '<p class="muted small">' + esc(t.content_type) + (t.keys ? " · keys: " + esc(Array.isArray(t.keys) ? t.keys.join(", ") : t.keys) : "") + '</p><pre class="deliv">' + esc(t.preview) + "</pre>", { wide: true });
           });
         });
       };
     });
   };
+
+  function importFlow(sup) {
+    var m = C.modal('<h3>Import products · ' + esc(sup.name) + '</h3><p class="muted small">Step 1: find the catalog endpoint. Step 2: preview. Step 3: import. Imported products are created as manual-delivery plans; prices = supplier cost + your markup. Re-importing refreshes price and stock only.</p>' +
+      '<div id="fd"><button class="btn btn-primary btn-sm" id="find">Find catalog automatically</button></div><form class="form" id="imf" style="margin-top:14px" hidden>' +
+      '<label class="fld"><span>Catalog path</span><input name="path" required></label>' +
+      '<label class="fld"><span>Markup % added to supplier price</span><input name="markup" type="number" min="0" max="1000" step="0.1" value="20"></label>' +
+      '<label class="fld"><span>Supplier prices are in</span><select name="cents"><option value="0">Dollars (e.g. 4.99)</option><option value="1">Cents (e.g. 499)</option></select></label>' +
+      '<button class="btn btn-ghost" type="submit">Preview</button></form><div id="pv" style="margin-top:14px"></div>', { wide: true });
+    var form = $("#imf", m.el), run = function (dry) {
+      var f = form.elements;
+      return P("/api/admin/supplier/import", { id: sup.id, path: f.path.value.trim(), markup: parseFloat(f.markup.value) || 0, cents: f.cents.value === "1", dry: dry });
+    };
+    var show = function (path) { form.hidden = false; form.elements.path.value = path; };
+    $("#find", m.el).onclick = function () {
+      var b = this;
+      C.busy(b, function () {
+        return P("/api/admin/supplier/discover", { id: sup.id }).then(function (d) {
+          if (!d.found.length) { $("#fd", m.el).innerHTML = '<div class="note">No catalog found automatically. Enter the products path from your supplier\'s documentation below.</div>'; show("/products"); return; }
+          $("#fd", m.el).innerHTML = '<p>Found: ' + d.found.map(function (x) { return '<button type="button" class="btn btn-ghost btn-sm" data-path="' + esc(x.path) + '">' + esc(x.path) + " (" + x.count + " products)</button>"; }).join(" ") + "</p>";
+          show(d.found[0].path);
+          $("#fd", m.el).onclick = function (e) { var p = e.target.closest("[data-path]"); if (p) show(p.dataset.path); };
+        });
+      });
+    };
+    form.onsubmit = function (e) {
+      e.preventDefault();
+      C.busy($("button", form), function () {
+        return run(true).then(function (d) {
+          $("#pv", m.el).innerHTML = "<b>" + d.total + " products found.</b> Sample:" + '<div class="tbl"><table><tr><th>Category</th><th>Name</th><th>Cost</th><th>Your price</th><th>Stock</th></tr>' + d.preview.map(function (i) {
+            return "<tr><td>" + esc(i.category) + "</td><td>" + esc(i.name) + "</td><td>" + money(i.cost / 100) + "</td><td>" + money(i.price / 100) + "</td><td>" + i.stock + (i.stock_note ? " <small>(" + esc(i.stock_note) + ")</small>" : "") + "</td></tr>";
+          }).join("") + '</table></div><p class="muted small">Check that prices look right (dollars vs cents). Stock reported only as available/unavailable is set to 1 or 0; edit it afterwards if needed.</p><button class="btn btn-primary" id="go">Import all ' + d.total + " products</button>";
+          $("#go", m.el).onclick = function () {
+            C.busy(this, function () { return run(false).then(function (r) { C.toast(r.created + " added, " + r.updated + " updated, " + r.images + " images"); m.close(); reload(); }); });
+          };
+        });
+      });
+    };
+  }
 
   /* ---------- activity log ---------- */
   views.audit = function (el) {

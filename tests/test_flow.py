@@ -388,6 +388,41 @@ class Suppliers(unittest.TestCase):
         self.assertEqual(conn.execute("SELECT api_key FROM suppliers WHERE id=?", (sid,)).fetchone()["api_key"], "sk_live_abcdef123456")
 
 
+class SupplierImport(unittest.TestCase):
+    def setUp(self):
+        import suppliers as sp
+        self.sp = sp
+        self._orig = sp.request
+        self.addCleanup(lambda: setattr(sp, 'request', self._orig))
+        self.sid = conn.execute("INSERT INTO suppliers(name,base_url,api_key,created_at) VALUES('Imp','https://example.com','k',1)").lastrowid
+        self.row = conn.execute("SELECT * FROM suppliers WHERE id=?", (self.sid,)).fetchone()
+
+    def test_normalize_shapes(self):
+        flat = {"products": [{"id": "a1", "name": "Netflix 1M", "price": "4.99", "stock": 7, "category": "Streaming", "imageUrl": "https://x/y.png"}]}
+        nested = {"data": [{"name": "VPN", "products": [{"_id": 9, "title": "Nord 7d", "price": 45, "inStock": True}]}]}
+        a = self.sp.normalize(flat)
+        self.assertEqual((a[0]["cost"], a[0]["stock"], a[0]["category"]), (499, 7, "Streaming"))
+        b = self.sp.normalize(nested, cents_unit=True)
+        self.assertEqual((b[0]["cost"], b[0]["category"], b[0]["stock"], b[0]["stock_note"]), (45, "VPN", 1, "availability only"))
+        self.assertEqual(self.sp.normalize([{"name": "no price"}]), [])
+
+    def test_import_creates_then_resyncs_without_overwriting_edits(self):
+        sp = self.sp
+        body = {"products": [{"id": "p1", "name": "Spotify", "price": "2.00", "stock": 5, "category": "Music"}]}
+        sp.request = lambda row, path, timeout=10, limit=0: (200, "application/json", json.dumps(body))
+        pre = sp.import_catalog(conn, self.row, "/products", 25, False, dry=True)
+        self.assertEqual(pre["preview"][0]["price"], 250)
+        r1 = sp.import_catalog(conn, self.row, "/products", 25, False, dry=False)
+        self.assertEqual((r1["created"], r1["updated"]), (1, 0))
+        pid = conn.execute("SELECT product_id FROM supplier_items WHERE external_id='p1'").fetchone()["product_id"]
+        conn.execute("UPDATE products SET name='My Spotify' WHERE id=?", (pid,))
+        body["products"][0].update(price="3.00", stock=2)
+        r2 = sp.import_catalog(conn, self.row, "/products", 25, False, dry=False)
+        self.assertEqual((r2["created"], r2["updated"]), (0, 1))
+        v = conn.execute("SELECT v.price,v.stock,p.name FROM variations v JOIN products p ON p.id=v.product_id WHERE p.id=?", (pid,)).fetchone()
+        self.assertEqual((v["price"], v["stock"], v["name"]), (375, 2, "My Spotify"))
+
+
 class Profile(unittest.TestCase):
     def test_change_password_and_name(self):
         uid = mk("prof@example.com")

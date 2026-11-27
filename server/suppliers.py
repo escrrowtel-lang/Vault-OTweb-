@@ -5,12 +5,18 @@ and outbound requests are limited to public https hosts.
 """
 import ipaddress
 import json
+import os
 import re
+import secrets
 import socket
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+
+import db
 import store
 from db import ApiError, tx
 
@@ -70,7 +76,7 @@ def save(conn, data, existing_id=None):
                             (name, base, mode, header, key, active, store.now())).lastrowid
 
 
-def request(row, path, timeout=10):
+def request(row, path, timeout=10, limit=200_000):
     """GET base_url + path using the stored key. Returns (status, content_type, text)."""
     if not str(path).startswith("/") or "\n" in path or "\r" in path or " " in path:
         raise ApiError(400, "Path must start with / (for example /v1/balance)")
@@ -89,7 +95,7 @@ def request(row, path, timeout=10):
     opener = urllib.request.build_opener(NoRedirect)
     try:
         with opener.open(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
-            return r.status, r.headers.get("Content-Type", ""), r.read(200_000).decode("utf-8", "replace")
+            return r.status, r.headers.get("Content-Type", ""), r.read(limit).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, e.headers.get("Content-Type", ""), e.read(20_000).decode("utf-8", "replace")
     except (urllib.error.URLError, OSError) as e:
@@ -108,3 +114,170 @@ def test(row, path):
     except ValueError:
         out["json"] = False
     return out
+
+
+# ------------------------------------------------------------------ catalog discovery + import
+CANDIDATES = ["/products", "/v1/products", "/api/products", "/api/v1/products", "/catalog", "/v1/catalog", "/api/catalog",
+              "/api/reseller/products", "/api/reseller/v1/products", "/api/reseller/catalog", "/products/list", "/shop/products",
+              "/categories", "/v1/categories"]
+LIST_KEYS = ("products", "data", "items", "results", "result", "catalog", "categories", "list", "plans")
+
+
+def _get(d, names):
+    low = {str(k).lower(): v for k, v in d.items()}
+    for n in names:
+        v = low.get(n.lower())
+        if v not in (None, "", [], {}):
+            return v
+    return None
+
+
+def extract(j, cat=""):
+    """Find product-like dicts in any reasonable catalog JSON. Returns [(category_name, item_dict)]."""
+    out = []
+    if isinstance(j, dict):
+        for k in LIST_KEYS:
+            if k in j and isinstance(j[k], (list, dict)):
+                return extract(j[k], cat)
+        return []
+    if isinstance(j, list):
+        for it in j:
+            if not isinstance(it, dict):
+                continue
+            sub = _get(it, ["products", "items", "plans"])
+            if isinstance(sub, list) and sub and isinstance(sub[0], dict) and not _get(it, ["price", "unit_price"]):
+                out += extract(sub, str(_get(it, ["name", "title"]) or cat))
+            else:
+                out.append((cat, it))
+    return out
+
+
+def to_cents(v, cents_unit):
+    try:
+        d = Decimal(re.sub(r"[^0-9.\-]", "", str(v)) or "x")
+    except InvalidOperation:
+        return None
+    if cents_unit:
+        d = d / 100
+    if d < 0:
+        return None
+    return int((d * 100).to_integral_value(ROUND_HALF_UP))
+
+
+def normalize(j, cents_unit=False):
+    items = []
+    for cat, it in extract(j):
+        price = to_cents(_get(it, ["resellerPrice", "reseller_price", "wholesale_price", "wholesalePrice", "price", "unitPrice", "unit_price",
+                                   "sellPrice", "sell_price", "cost", "rate", "amount"]), cents_unit)
+        name = _get(it, ["name", "title", "productName", "product_name"])
+        ext = _get(it, ["id", "_id", "productId", "product_id", "sku", "uuid", "slug", "code"])
+        if price is None or not name or ext is None:
+            continue
+        c = _get(it, ["category", "categoryName", "category_name", "type", "group"])
+        if isinstance(c, dict):
+            c = _get(c, ["name", "title"])
+        stock = _get(it, ["stock", "quantity", "qty", "available", "inStock", "in_stock"])
+        note = ""
+        if isinstance(stock, bool):
+            stock, note = (1 if stock else 0), "availability only"
+        else:
+            try:
+                stock = max(0, int(float(stock))) if stock is not None else 0
+            except (TypeError, ValueError):
+                stock = 0
+        img = _get(it, ["imageUrl", "image_url", "image", "thumbnail", "logo", "icon", "img", "picture"])
+        if isinstance(img, dict):
+            img = _get(img, ["url", "src"])
+        items.append({"ext": str(ext)[:120], "name": str(name).strip()[:120], "category": str(c or cat or "General")[:60],
+                      "description": str(_get(it, ["description", "desc", "details", "about"]) or "")[:2000],
+                      "cost": price, "stock": stock, "stock_note": note, "image": img if isinstance(img, str) else ""})
+    return items
+
+
+def discover(row):
+    found = []
+    for path in CANDIDATES:
+        try:
+            status, ctype, body = request(row, path, timeout=6)
+            j = json.loads(body) if status == 200 else None
+        except (ApiError, ValueError):
+            continue
+        if j is None:
+            continue
+        n = len(normalize(j))
+        if n:
+            found.append({"path": path, "count": n})
+    return found
+
+
+def _download_image(url):
+    try:
+        check_url(url)
+        req = urllib.request.Request(url, headers={"User-Agent": "VaultStore/1", "Accept": "image/*"})
+        with urllib.request.build_opener().open(req, timeout=10) as r:
+            raw = r.read(1_000_001)
+    except Exception:
+        return ""
+    if len(raw) > 1_000_000 or len(raw) < 100:
+        return ""
+    ext = ".png" if raw.startswith(b"\x89PNG") else ".jpg" if raw.startswith(b"\xff\xd8\xff") else ".webp" if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP" else ""
+    if not ext:
+        return ""
+    name = secrets.token_hex(8) + ext
+    try:
+        with open(os.path.join(db.UPLOAD_DIR, name), "wb") as f:
+            f.write(raw)
+    except OSError:
+        return ""
+    return "/uploads/" + name
+
+
+def import_catalog(conn, row, path, markup_pct, cents_unit, dry=True):
+    status, ctype, body = request(row, path, timeout=20, limit=3_000_000)
+    if status != 200:
+        raise ApiError(400, "Supplier returned HTTP %d for %s" % (status, path))
+    try:
+        items = normalize(json.loads(body), cents_unit)
+    except ValueError:
+        raise ApiError(400, "The supplier did not return JSON")
+    if not items:
+        raise ApiError(400, "No products found in this response. Check the path.")
+    k = Decimal(1) + Decimal(str(markup_pct)) / 100
+    for it in items:
+        it["price"] = int((Decimal(it["cost"]) * k).to_integral_value(ROUND_HALF_UP))
+    if dry:
+        return {"total": len(items), "preview": items[:12]}
+    created = updated = 0
+    cats = {r["name"]: r["id"] for r in conn.execute("SELECT id,name FROM categories").fetchall()}
+    for it in items:
+        with tx(conn):
+            cid = cats.get(it["category"])
+            if cid is None:
+                cid = cats[it["category"]] = conn.execute("INSERT INTO categories(name) VALUES(?)", (it["category"],)).lastrowid
+            m = conn.execute("SELECT * FROM supplier_items WHERE supplier_id=? AND external_id=?", (row["id"], it["ext"])).fetchone()
+            if m:  # re-sync: refresh price and stock only, keep the admin's own edits to name/description/image
+                conn.execute("UPDATE variations SET price=?, stock=? WHERE id=?", (it["price"], it["stock"], m["variation_id"]))
+                conn.execute("UPDATE supplier_items SET cost=? WHERE id=?", (it["cost"], m["id"]))
+                updated += 1
+                continue
+            pid = conn.execute("INSERT INTO products(category_id,name,description,mode,glyph,color) VALUES(?,?,?,?,?,?)",
+                               (cid, it["name"], it["description"], "manual", "mono", "#0ea5e9")).lastrowid
+            vid = conn.execute("INSERT INTO variations(product_id,name,price,min_qty,max_qty,stock) VALUES(?,?,?,?,?,?)",
+                               (pid, "Standard", it["price"], 1, 1, it["stock"])).lastrowid
+            conn.execute("INSERT INTO supplier_items(supplier_id,external_id,product_id,variation_id,cost) VALUES(?,?,?,?,?)",
+                         (row["id"], it["ext"], pid, vid, it["cost"]))
+            created += 1
+    # images (outside the DB transaction), bounded so one request cannot run forever
+    t0, imgs = time.time(), 0
+    for it in items:
+        if not it["image"] or time.time() - t0 > 45:
+            continue
+        m = conn.execute("SELECT product_id FROM supplier_items WHERE supplier_id=? AND external_id=?", (row["id"], it["ext"])).fetchone()
+        cur = conn.execute("SELECT image FROM products WHERE id=?", (m["product_id"],)).fetchone() if m else None
+        if cur and not cur["image"]:
+            url = _download_image(it["image"])
+            if url:
+                with tx(conn):
+                    conn.execute("UPDATE products SET image=? WHERE id=?", (url, m["product_id"]))
+                imgs += 1
+    return {"created": created, "updated": updated, "images": imgs, "total": len(items)}
