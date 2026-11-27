@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS deposits(
   decided_at INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS dep_ref ON deposits(method, reference) WHERE status IN ('pending','approved');
+CREATE TABLE IF NOT EXISTS suppliers(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  auth_mode TEXT NOT NULL DEFAULT 'header',
+  auth_header TEXT NOT NULL DEFAULT 'X-API-Key',
+  api_key TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS incoming(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source TEXT NOT NULL,

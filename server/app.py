@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import db
 import mailer
 import autopay
+import suppliers
 import store
 from db import ApiError, connect, tx, to_cents, get_settings
 
@@ -511,6 +512,37 @@ def adm_coupon(r):
         except Exception:
             raise ApiError(409, "This coupon code already exists")
     return {"ok": True}
+
+
+@route("GET", "/api/admin/suppliers", "admin")
+def adm_suppliers(r):
+    return {"suppliers": [suppliers.public(x) for x in r.conn.execute("SELECT * FROM suppliers ORDER BY id").fetchall()]}
+
+
+@route("POST", "/api/admin/supplier", "admin")
+def adm_supplier(r):
+    sid = _int(r.body.get("id")) or None
+    sid = suppliers.save(r.conn, r.body, sid)
+    store.audit(r.conn, r.user["id"], "supplier_save", "supplier #%s" % sid)  # key never logged
+    return {"id": sid}
+
+
+@route("POST", "/api/admin/supplier/delete", "admin")
+def adm_supplier_delete(r):
+    sid = _int(r.need("id")[0])
+    r.conn.execute("DELETE FROM suppliers WHERE id=?", (sid,))
+    store.audit(r.conn, r.user["id"], "supplier_delete", "supplier #%s" % sid)
+    return {"ok": True}
+
+
+@route("POST", "/api/admin/supplier/test", "admin")
+def adm_supplier_test(r):
+    if limited(("suptest", r.user["id"]), 20, 60):
+        raise ApiError(429, "Please wait a moment and try again")
+    row = r.conn.execute("SELECT * FROM suppliers WHERE id=?", (_int(r.need("id")[0]),)).fetchone()
+    if not row:
+        raise ApiError(404, "Supplier not found")
+    return suppliers.test(row, str(r.body.get("path", "/")))
 
 
 @route("GET", "/api/admin/settings", "admin")

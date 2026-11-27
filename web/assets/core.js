@@ -102,7 +102,7 @@
       }).join("") + "</select>";
       else if (f.type === "checkbox") html += '<input type="checkbox" name="' + f.k + '"' + (Number(v) || v === true ? " checked" : "") + ">";
       else if (f.type === "image") html += '<input type="hidden" name="' + f.k + '" value="' + esc(v) + '"><input type="file" accept="image/png,image/jpeg,image/webp" data-up="' + f.k + '"><small class="muted upmsg">' + (v ? "Image set: " + esc(v) : "No image (the icon glyph will be used)") + "</small>";
-      else html += '<input name="' + f.k + '" type="' + (f.type || "text") + '" value="' + esc(v) + '"' + (f.step ? ' step="' + f.step + '"' : "") + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : "") + ">";
+      else html += '<input name="' + f.k + '" type="' + (f.type || "text") + '" value="' + esc(v) + '"' + (f.step ? ' step="' + f.step + '"' : "") + (f.ph ? ' placeholder="' + esc(f.ph) + '"' : "") + (f.type === "password" ? ' autocomplete="new-password"' : "") + ">";
       if (f.help) html += "<small class=\"muted\">" + esc(f.help) + "</small>";
       html += "</label>";
     });

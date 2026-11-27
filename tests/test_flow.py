@@ -371,6 +371,23 @@ class Reset(unittest.TestCase):
         self.assertEqual((len(row["action"]), len(row["detail"])), (40, 300))
 
 
+class Suppliers(unittest.TestCase):
+    def test_key_masked_kept_and_ssrf_blocked(self):
+        import suppliers as sp
+        sid = conn.execute("INSERT INTO suppliers(name,base_url,api_key,created_at) VALUES('S','https://example.com','sk_live_abcdef123456',1)").lastrowid
+        row = conn.execute("SELECT * FROM suppliers WHERE id=?", (sid,)).fetchone()
+        pub = sp.public(row)
+        self.assertNotIn("abcdef", json.dumps(pub))
+        self.assertTrue(pub["key_hint"].endswith("3456"))
+        for bad in ("http://example.com", "https://127.0.0.1", "https://localhost/x", "https://169.254.169.254", "https://user:p@example.com"):
+            with self.assertRaises(ApiError):
+                sp.check_url(bad)
+        with self.assertRaises(ApiError):
+            sp.request(row, "v1/balance")  # path must start with /
+        sp.save(conn, {"name": "S2", "base_url": "https://1.1.1.1", "api_key": ""}, sid)  # blank key keeps old
+        self.assertEqual(conn.execute("SELECT api_key FROM suppliers WHERE id=?", (sid,)).fetchone()["api_key"], "sk_live_abcdef123456")
+
+
 class Profile(unittest.TestCase):
     def test_change_password_and_name(self):
         uid = mk("prof@example.com")

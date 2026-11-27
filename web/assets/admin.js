@@ -2,7 +2,7 @@
 (function () {
   var C = window.Core, $ = C.$, esc = C.esc, money = C.money;
   var root = $("#adm");
-  var TABS = [["dash", "Dashboard"], ["deposits", "Deposits"], ["orders", "Orders"], ["catalog", "Catalog & inventory"], ["users", "Users"], ["coupons", "Coupons"], ["audit", "Activity"], ["settings", "Settings"]];
+  var TABS = [["dash", "Dashboard"], ["deposits", "Deposits"], ["orders", "Orders"], ["catalog", "Catalog & inventory"], ["users", "Users"], ["coupons", "Coupons"], ["suppliers", "Supplier API"], ["audit", "Activity"], ["settings", "Settings"]];
   var dt = function (ts) { return ts ? new Date(ts * 1000).toLocaleString() : ""; };
   var ok = function (m) { C.toast(m || "Saved"); };
   var P = function (path, body) { return C.api("POST", path, body); };
@@ -171,6 +171,38 @@
         if (b.dataset.a === "adj") C.formModal("Adjust balance", [{ k: "amount", label: "Amount in USD (+ to add, − to deduct)", type: "number", step: "0.01" }, { k: "reason", label: "Reason", def: "adjust" }], {}, function (v) { return P("/api/admin/user/adjust", { id: id, amount: v.amount, reason: v.reason }).then(function () { ok(); reload(); }); });
         else if (b.dataset.a === "rst") P("/api/admin/user/reset-link", { id: id }).then(function (d) { C.formModal("Password reset link", [{ k: "l", label: "Send this link to " + d.email + " (valid for " + d.valid_minutes + " minutes, single use)" }], { l: location.origin + d.path }, function () { return Promise.resolve(); }); }).catch(function (x) { C.toast(x.message, true); });
         else P("/api/admin/user/block", { id: id, blocked: parseInt(b.dataset.b, 10) }).then(function () { ok(); reload(); }).catch(function (x) { C.toast(x.message, true); });
+      };
+    });
+  };
+
+  /* ---------- supplier API keys ---------- */
+  views.suppliers = function (el) {
+    return C.api("GET", "/api/admin/suppliers").then(function (d) {
+      var F = function (editing) {
+        return [{ k: "name", label: "Supplier name" },
+          { k: "base_url", label: "API base URL", help: "Public https address, for example https://api.example.com/v1" },
+          { k: "auth_mode", label: "Authentication", type: "select", options: [["header", "API key in a header"], ["bearer", "Authorization: Bearer key"]] },
+          { k: "auth_header", label: "Header name (header mode)", def: "X-API-Key" },
+          { k: "api_key", label: editing ? "API key (leave blank to keep the saved key)" : "API key", type: "password", help: "Stored on the server only. It is never shown again after saving." },
+          { k: "active", label: "Enabled", type: "checkbox", def: 1 }];
+      };
+      el.innerHTML = '<div class="bar"><button class="btn btn-primary btn-sm" id="ns">+ Add supplier</button></div>' +
+        (d.suppliers.length ? '<div class="tbl card"><table><tr><th>Name</th><th>Base URL</th><th>Key</th><th>Status</th><th></th></tr>' + d.suppliers.map(function (x) {
+          return "<tr><td>" + esc(x.name) + '</td><td class="mono wrapc">' + esc(x.base_url) + '</td><td class="mono">' + (x.has_key ? esc(x.key_hint) : '<span class="muted">none</span>') + '</td><td><span class="badge ' + (x.active ? "b-in" : "b-out") + '">' + (x.active ? "enabled" : "off") + '</span></td><td>' +
+            '<button class="btn btn-ghost btn-sm" data-a="test" data-id="' + x.id + '">Test</button> <button class="btn btn-ghost btn-sm" data-a="edit" data-id="' + x.id + '">Edit</button> <button class="btn btn-ghost btn-sm" data-a="del" data-id="' + x.id + '">Delete</button></td></tr>';
+        }).join("") + "</table></div>" : '<div class="empty">No supplier connected yet.</div>') +
+        '<p class="muted small" style="margin-top:12px">Add the API key given by your supplier. Use Test to check the connection: it sends one read-only GET request (for example /v1/balance) and shows the response. Keys are stored on the server and are never displayed again.</p>';
+      $("#ns", el).onclick = function () { C.formModal("Add supplier", F(false), {}, function (v) { return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); }); };
+      el.onclick = function (e) {
+        var b = e.target.closest("[data-a]"); if (!b) return;
+        var id = parseInt(b.dataset.id, 10), x = d.suppliers.filter(function (s) { return s.id === id; })[0];
+        if (b.dataset.a === "edit") C.formModal("Edit supplier", F(true), x, function (v) { v.id = id; return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); });
+        else if (b.dataset.a === "del") { if (confirm("Delete " + x.name + " and its saved key?")) P("/api/admin/supplier/delete", { id: id }).then(function () { ok("Deleted"); reload(); }); }
+        else C.formModal("Test " + x.name, [{ k: "path", label: "Path to call (GET)", def: "/v1/balance" }], { path: "/v1/balance" }, function (v) {
+          return P("/api/admin/supplier/test", { id: id, path: v.path }).then(function (t) {
+            C.modal("<h3>Response " + t.status + (t.ok ? " ✓" : "") + '</h3><p class="muted small">' + esc(t.content_type) + (t.keys ? " · keys: " + esc(Array.isArray(t.keys) ? t.keys.join(", ") : t.keys) : "") + '</p><pre class="deliv">' + esc(t.preview) + "</pre>", { wide: true });
+          });
+        });
       };
     });
   };
