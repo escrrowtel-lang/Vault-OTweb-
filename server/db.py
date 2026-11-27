@@ -142,7 +142,12 @@ CREATE TABLE IF NOT EXISTS suppliers(
   auth_header TEXT NOT NULL DEFAULT 'X-API-Key',
   api_key TEXT NOT NULL DEFAULT '',
   active INTEGER NOT NULL DEFAULT 1,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'generic',
+  catalog_path TEXT NOT NULL DEFAULT '',
+  markup TEXT NOT NULL DEFAULT '20',
+  cents INTEGER NOT NULL DEFAULT 0,
+  auto_sync INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS supplier_items(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,8 +155,24 @@ CREATE TABLE IF NOT EXISTS supplier_items(
   external_id TEXT NOT NULL,
   product_id INTEGER NOT NULL REFERENCES products(id),
   variation_id INTEGER NOT NULL REFERENCES variations(id),
-  cost INTEGER NOT NULL DEFAULT 0
+  cost INTEGER NOT NULL DEFAULT 0,
+  needs_email INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS supplier_orders(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  supplier_id INTEGER NOT NULL REFERENCES suppliers(id),
+  product_ext TEXT NOT NULL,
+  emails TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'queued',
+  external_id TEXT NOT NULL DEFAULT '',
+  cost INTEGER NOT NULL DEFAULT 0,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS supplier_orders_order ON supplier_orders(order_id);
 CREATE UNIQUE INDEX IF NOT EXISTS supplier_items_ext ON supplier_items(supplier_id, external_id);
 CREATE TABLE IF NOT EXISTS incoming(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -297,6 +318,22 @@ def tx(conn):
         conn.execute("COMMIT")
 
 
+MIGRATIONS = [("suppliers", "kind", "TEXT NOT NULL DEFAULT 'generic'"), ("suppliers", "catalog_path", "TEXT NOT NULL DEFAULT ''"),
+              ("suppliers", "markup", "TEXT NOT NULL DEFAULT '20'"), ("suppliers", "cents", "INTEGER NOT NULL DEFAULT 0"),
+              ("suppliers", "auto_sync", "INTEGER NOT NULL DEFAULT 0"), ("supplier_items", "needs_email", "INTEGER NOT NULL DEFAULT 0")]
+
+
+def _migrate(c):
+    """Add columns that older databases do not have yet (CREATE TABLE IF NOT EXISTS never alters)."""
+    for table, col, ddl in MIGRATIONS:
+        if USE_PG:
+            c.executescript('ALTER TABLE "%s" ADD COLUMN IF NOT EXISTS %s %s' % (table, col, ddl.replace("INTEGER", "BIGINT")))
+        else:
+            have = [r[1] for r in c.execute("PRAGMA table_info(%s)" % table).fetchall()]
+            if col not in have:
+                c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table, col, ddl))
+
+
 def init():
     try:
         os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -315,6 +352,7 @@ def init():
         c = connect()
         with tx(c):
             c.executescript(pg_schema_sql())
+            _migrate(c)
             for tname in _tables():
                 # Supabase ka public REST API in tables ko na chhu sake: RLS ON, koi policy nahi
                 c.executescript('ALTER TABLE "%s" ENABLE ROW LEVEL SECURITY' % tname)
@@ -330,6 +368,7 @@ def init():
     os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     c = connect()
     c.executescript(SCHEMA)
+    _migrate(c)
     _seed_settings(c)
     c.close()
 

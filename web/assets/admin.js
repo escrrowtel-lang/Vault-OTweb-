@@ -63,7 +63,7 @@
       el.innerHTML = '<div class="bar"><select id="fs" class="search" style="max-width:200px">' + ["", "processing", "pending", "completed", "refunded", "cancelled"].map(function (s) { return '<option value="' + s + '"' + (s === f ? " selected" : "") + ">" + (s || "all") + "</option>"; }).join("") + "</select></div>" +
         (d.orders.length ? '<div class="tbl card"><table><tr><th>#</th><th>Date</th><th>User</th><th>Item</th><th>Total</th><th>Status</th><th></th></tr>' + d.orders.map(function (o) {
           return "<tr><td>" + o.id + "</td><td>" + dt(o.created_at) + "</td><td>" + esc(o.email) + "</td><td>" + esc(o.product_name) + " · " + esc(o.plan_name) + " × " + o.qty + (o.preorder ? " <small>(pre-order)</small>" : "") + "</td><td>" + money(o.total) +
-            '</td><td><span class="badge b-low">' + o.status + "</span></td><td>" +
+            '</td><td><span class="badge b-low">' + o.status + "</span>" + (o.supplier ? '<div class="small" style="margin-top:4px">→ ' + esc(o.supplier.name) + ": " + supChip(o.supplier).replace(/<div.*$/, "") + "</div>" : "") + "</td><td>" +
             (o.status === "processing" ? '<button class="btn btn-primary btn-sm" data-a="deliver" data-id="' + o.id + '">Deliver</button> ' : "") +
             (o.status === "completed" && o.delivery_text ? '<button class="btn btn-ghost btn-sm" data-a="view" data-id="' + o.id + '">View</button> ' : "") +
             (["refunded", "cancelled"].indexOf(o.status) < 0 ? '<button class="btn btn-ghost btn-sm" data-a="refund" data-id="' + o.id + '">Refund</button>' : "") + "</td></tr>";
@@ -176,22 +176,37 @@
   };
 
   /* ---------- supplier API keys ---------- */
+  function supChip(i) {
+    var t = { queued: ["b-low", "Queued to send"], sent: ["b-low", "Sent · waiting for delivery"], delivered: ["b-in", "Delivered by supplier"], failed: ["b-out", "Failed · customer refunded"], attention: ["b-out", "Needs attention"] }[i.status] || ["b-low", i.status];
+    return '<span class="badge ' + t[0] + '">' + t[1] + "</span>" + (i.error ? '<div class="muted small">' + esc(i.error) + "</div>" : "");
+  }
+
   views.suppliers = function (el) {
     return C.api("GET", "/api/admin/suppliers").then(function (d) {
       var F = function (editing) {
         return [{ k: "name", label: "Supplier name" },
-          { k: "base_url", label: "API base URL", help: "Public https address, for example https://api.example.com/v1" },
+          { k: "kind", label: "API type", type: "select", options: [["prodseller", "ProdSeller (full order forwarding)"], ["generic", "Other (catalog import only)"]], def: "prodseller" },
+          { k: "base_url", label: "API base URL", help: "ProdSeller: https://prodseller.com/v1 (do not add /balance here)" },
           { k: "auth_mode", label: "Authentication", type: "select", options: [["header", "API key in a header"], ["bearer", "Authorization: Bearer key"]] },
           { k: "auth_header", label: "Header name (header mode)", def: "X-API-Key" },
           { k: "api_key", label: editing ? "API key (leave blank to keep the saved key)" : "API key", type: "password", help: "Stored on the server only. It is never shown again after saving." },
+          { k: "auto_sync", label: "Keep prices and stock in sync every 10 minutes", type: "checkbox", def: 1 },
           { k: "active", label: "Enabled", type: "checkbox", def: 1 }];
       };
       el.innerHTML = '<div class="bar"><button class="btn btn-primary btn-sm" id="ns">+ Add supplier</button></div>' +
         (d.suppliers.length ? '<div class="tbl card"><table><tr><th>Name</th><th>Base URL</th><th>Key</th><th>Status</th><th></th></tr>' + d.suppliers.map(function (x) {
           return "<tr><td>" + esc(x.name) + '</td><td class="mono wrapc">' + esc(x.base_url) + '</td><td class="mono">' + (x.has_key ? esc(x.key_hint) : '<span class="muted">none</span>') + '</td><td><span class="badge ' + (x.active ? "b-in" : "b-out") + '">' + (x.active ? "enabled" : "off") + '</span></td><td>' +
-            '<button class="btn btn-primary btn-sm" data-a="imp" data-id="' + x.id + '">Import products</button> <button class="btn btn-ghost btn-sm" data-a="test" data-id="' + x.id + '">Test</button> <button class="btn btn-ghost btn-sm" data-a="edit" data-id="' + x.id + '">Edit</button> <button class="btn btn-ghost btn-sm" data-a="del" data-id="' + x.id + '">Delete</button></td></tr>';
+            '<button class="btn btn-primary btn-sm" data-a="imp" data-id="' + x.id + '">Import products</button> <button class="btn btn-ghost btn-sm" data-a="bal" data-id="' + x.id + '">Balance</button> <button class="btn btn-ghost btn-sm" data-a="test" data-id="' + x.id + '">Test</button> <button class="btn btn-ghost btn-sm" data-a="edit" data-id="' + x.id + '">Edit</button> <button class="btn btn-ghost btn-sm" data-a="del" data-id="' + x.id + '">Delete</button></td></tr>';
         }).join("") + "</table></div>" : '<div class="empty">No supplier connected yet.</div>') +
-        '<p class="muted small" style="margin-top:12px">Add the API key given by your supplier. Use Test to check the connection: it sends one read-only GET request (for example /v1/balance) and shows the response. Keys are stored on the server and are never displayed again.</p>';
+        '<p class="muted small" style="margin-top:12px">Add the API key given by your supplier. Use Test to check the connection: it sends one read-only GET request (for example /balance) and shows the response. Keys are stored on the server and are never displayed again.</p>';
+      C.api("GET", "/api/admin/supplier-orders").then(function (so) {
+        var h = '<h3 style="margin:22px 0 8px">Orders sent to suppliers</h3>' + (so.items.length ? '<div class="tbl card"><table><tr><th>Order</th><th>Item</th><th>Supplier</th><th>Status</th><th>Cost</th><th>Profit</th><th></th></tr>' + so.items.map(function (i) {
+          return "<tr><td>#" + i.order_id + "</td><td>" + esc(i.product_name) + " · " + esc(i.plan_name) + "</td><td>" + esc(i.sname) + "</td><td>" + supChip(i) + "</td><td>" + money(i.cost) + "</td><td>" + money(i.total - i.cost) + "</td><td>" +
+            (i.status === "attention" ? '<button class="btn btn-primary btn-sm" data-r="' + i.id + '">Retry</button>' : "") + "</td></tr>";
+        }).join("") + "</table></div>" : '<div class="empty">No order has been sent to a supplier yet.</div>');
+        var box = document.createElement("div"); box.innerHTML = h; el.appendChild(box);
+        box.onclick = function (e) { var b = e.target.closest("[data-r]"); if (b) P("/api/admin/supplier-order/retry", { id: +b.dataset.r }).then(function () { ok("Sent again"); reload(); }); };
+      });
       $("#ns", el).onclick = function () { C.formModal("Add supplier", F(false), {}, function (v) { return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); }); };
       el.onclick = function (e) {
         var b = e.target.closest("[data-a]"); if (!b) return;
@@ -199,7 +214,8 @@
         if (b.dataset.a === "edit") C.formModal("Edit supplier", F(true), x, function (v) { v.id = id; return P("/api/admin/supplier", v).then(function () { ok(); reload(); }); });
         else if (b.dataset.a === "del") { if (confirm("Delete " + x.name + " and its saved key?")) P("/api/admin/supplier/delete", { id: id }).then(function () { ok("Deleted"); reload(); }); }
         else if (b.dataset.a === "imp") importFlow(x);
-        else C.formModal("Test " + x.name, [{ k: "path", label: "Path to call (GET)", def: "/v1/balance" }], { path: "/v1/balance" }, function (v) {
+        else if (b.dataset.a === "bal") P("/api/admin/supplier/balance", { id: id }).then(function (t) { C.toast("Supplier balance: $" + t.balance + (t.username ? " (" + t.username + ")" : "")); });
+        else C.formModal("Test " + x.name, [{ k: "path", label: "Path to call (GET)", def: "/balance" }], { path: "/balance" }, function (v) {
           return P("/api/admin/supplier/test", { id: id, path: v.path }).then(function (t) {
             C.modal("<h3>Response " + t.status + (t.ok ? " ✓" : "") + '</h3>' + (t.status === 404 ? '<div class="note">This path does not exist on the supplier. Use <b>Import products</b> to search for the catalog path automatically, or check the base URL (many suppliers use a prefix such as /api/reseller).</div>' : "") + '<p class="muted small">' + esc(t.content_type) + (t.keys ? " · keys: " + esc(Array.isArray(t.keys) ? t.keys.join(", ") : t.keys) : "") + '</p><pre class="deliv">' + esc(t.preview) + "</pre>", { wide: true });
           });

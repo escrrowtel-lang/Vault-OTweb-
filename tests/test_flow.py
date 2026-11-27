@@ -403,7 +403,7 @@ class SupplierImport(unittest.TestCase):
         a = self.sp.normalize(flat)
         self.assertEqual((a[0]["cost"], a[0]["stock"], a[0]["category"]), (499, 7, "Streaming"))
         b = self.sp.normalize(nested, cents_unit=True)
-        self.assertEqual((b[0]["cost"], b[0]["category"], b[0]["stock"], b[0]["stock_note"]), (45, "VPN", 1, "availability only"))
+        self.assertEqual((b[0]["cost"], b[0]["category"], b[0]["stock"], b[0]["stock_note"]), (45, "VPN", 999, "availability only"))
         self.assertEqual(self.sp.normalize([{"name": "no price"}]), [])
 
     def test_import_creates_then_resyncs_without_overwriting_edits(self):
@@ -523,3 +523,75 @@ class AutoPay(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class SupplierFulfil(unittest.TestCase):
+    def setUp(self):
+        import suppliers as sp, fulfil
+        self.sp, self.fulfil = sp, fulfil
+        self._orig = sp.request
+        self.addCleanup(lambda: setattr(sp, 'request', self._orig))
+        self.sid = conn.execute("INSERT INTO suppliers(name,base_url,api_key,kind,created_at) VALUES('PS','https://prodseller.com/v1','k','prodseller',1)").lastrowid
+        pid, self.vid = catalog("manual", "5.00")
+        conn.execute("UPDATE variations SET stock=50,max_qty=10 WHERE id=?", (self.vid,))
+        self.itemid = conn.execute("INSERT INTO supplier_items(supplier_id,external_id,product_id,variation_id,cost,needs_email) VALUES(?,?,?,?,?,?)",
+                                   (self.sid, "ext1", pid, self.vid, 300, 1)).lastrowid
+        self.u = mk("f%d@example.com" % self.sid)
+        fund(self.u, "50")
+
+    def buy(self, **kw):
+        oid = store.buy(conn, self.u, self.vid, 1, "", **kw)
+        return oid, conn.execute("SELECT * FROM supplier_orders WHERE order_id=?", (oid,)).fetchone()
+
+    def test_join_dedupes_prefix(self):
+        self.assertEqual(self.sp._join("https://prodseller.com/v1", "/v1/balance"), "https://prodseller.com/v1/balance")
+        self.assertEqual(self.sp._join("https://prodseller.com/v1", "/balance"), "https://prodseller.com/v1/balance")
+
+    def test_email_required(self):
+        with self.assertRaises(ApiError):
+            self.buy()
+        with self.assertRaises(ApiError):
+            self.buy(email="not-an-email")
+
+    def test_sent_and_delivered(self):
+        oid, so = self.buy(email="Me@Example.com")
+        self.assertEqual((so["status"], so["emails"], so["cost"]), ("queued", "me@example.com", 300))
+        seen = {}
+
+        def fake(row, path, timeout=10, limit=0, method="GET", body=None, extra=None):
+            seen.update(path=path, body=body, extra=extra)
+            return 201, "application/json", json.dumps({"orderId": "X9", "status": "delivered", "amount": 3, "deliveredKey": "ACT-1"})
+        self.sp.request = fake
+        r = self.fulfil.forward(conn, so["id"])
+        self.assertEqual(seen["body"], {"productId": "ext1", "quantity": 1, "email": "me@example.com"})
+        self.assertEqual(seen["extra"]["Idempotency-Key"], "vaultstore-order-%d" % oid)
+        self.assertEqual(r["status"], "delivered")
+        o = conn.execute("SELECT status, delivery_text FROM orders WHERE id=?", (oid,)).fetchone()
+        self.assertEqual(o["status"], "completed")
+        self.assertIn("ACT-1", o["delivery_text"])
+
+    def test_supplier_rejection_refunds(self):
+        before = conn.execute("SELECT balance FROM users WHERE id=?", (self.u,)).fetchone()["balance"]
+        oid, so = self.buy(email="m@example.com")
+        self.sp.request = lambda *a, **k: (402, "application/json", json.dumps({"error": "insufficient balance"}))
+        r = self.fulfil.forward(conn, so["id"])
+        self.assertEqual(r["status"], "failed")
+        o = conn.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()
+        self.assertEqual(o["status"], "refunded")
+        self.assertEqual(conn.execute("SELECT balance FROM users WHERE id=?", (self.u,)).fetchone()["balance"], before)
+
+    def test_server_error_retries_then_attention(self):
+        oid, so = self.buy(email="m@example.com")
+        self.sp.request = lambda *a, **k: (503, "text/plain", "down")
+        r = self.fulfil.forward(conn, so["id"])
+        self.assertEqual(r["status"], "queued")
+        conn.execute("UPDATE supplier_orders SET attempts=? WHERE id=?", (self.fulfil.MAX_ATTEMPTS - 1, so["id"]))
+        self.assertEqual(self.fulfil.forward(conn, so["id"])["status"], "attention")
+        self.assertEqual(conn.execute("SELECT status FROM orders WHERE id=?", (oid,)).fetchone()["status"], "processing")
+
+    def test_manual_refund_stops_forwarding(self):
+        oid, so = self.buy(email="m@example.com")
+        store.refund_order(conn, oid)
+        self.sp.request = lambda *a, **k: self.fail("must not be sent")
+        self.fulfil.forward(conn, so["id"])
+        self.assertEqual(conn.execute("SELECT status FROM supplier_orders WHERE id=?", (so["id"],)).fetchone()["status"], "failed")

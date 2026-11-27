@@ -159,6 +159,7 @@ def available(conn, variation_id, mode):
 
 def public_catalog(conn):
     out = []
+    needs = {r["variation_id"] for r in conn.execute("SELECT variation_id FROM supplier_items WHERE needs_email=1").fetchall()}
     for c in conn.execute("SELECT * FROM categories WHERE active=1 ORDER BY position,id"):
         prods = []
         for p in conn.execute("SELECT * FROM products WHERE category_id=? AND active=1 ORDER BY position,id", (c["id"],)):
@@ -167,7 +168,7 @@ def public_catalog(conn):
                 stock = available(conn, v["id"], p["mode"])
                 vs.append({"id": v["id"], "name": v["name"], "price": v["price"] / 100, "stock": stock,
                            "min_qty": v["min_qty"], "max_qty": v["max_qty"],
-                           "prebook": p["mode"] == "auto" and stock == 0})
+                           "prebook": p["mode"] == "auto" and stock == 0, "needs_email": v["id"] in needs})
             if vs:
                 prods.append({"id": p["id"], "name": p["name"], "description": p["description"], "image": p["image"],
                               "glyph": p["glyph"], "color": p["color"], "mode": p["mode"], "variations": vs})
@@ -214,7 +215,7 @@ def _deliver_items(conn, variation_id, qty, order_id):
     return "\n".join(r["content"] for r in rows)
 
 
-def buy(conn, user_id, variation_id, qty, coupon_code=""):
+def buy(conn, user_id, variation_id, qty, coupon_code="", email=""):
     try:
         qty = int(qty)
         variation_id = int(variation_id)
@@ -232,6 +233,16 @@ def buy(conn, user_id, variation_id, qty, coupon_code=""):
             raise ApiError(404, "This plan is not available")
         if qty < v["min_qty"] or qty > v["max_qty"]:
             raise ApiError(400, "Choose a quantity between %d and %d" % (v["min_qty"], v["max_qty"]))
+        si = conn.execute("SELECT si.supplier_id, si.external_id, si.needs_email, si.cost FROM supplier_items si "
+                          "JOIN suppliers s ON s.id=si.supplier_id WHERE si.variation_id=? AND s.active=1 AND s.kind='prodseller'",
+                          (variation_id,)).fetchone() if v["mode"] == "manual" else None
+        emails = ""
+        if si and si["needs_email"]:
+            emails = " ".join(str(email or "").split()).lower()
+            if not EMAIL_RE.match(emails) or "," in emails:
+                raise ApiError(400, "Enter the email address that should receive this subscription")
+            if qty != 1:
+                raise ApiError(400, "This product can only be ordered one at a time")
         stock = available(conn, variation_id, v["mode"])
         preorder = 0
         if v["mode"] == "auto":
@@ -264,6 +275,13 @@ def buy(conn, user_id, variation_id, qty, coupon_code=""):
             conn.execute("UPDATE orders SET delivery_text=? WHERE id=?", (text, oid))
         elif v["mode"] == "manual":
             conn.execute("UPDATE variations SET stock=stock-? WHERE id=?", (qty, variation_id))
+        if si:  # forwarded to the supplier by fulfil.py; same transaction, so a paid order is never left unqueued
+            cost = si["cost"] * qty
+            held = "Supplier cost $%.2f is above your selling price. Review it, then press Retry." % (cost / 100) if cost > gross else ""
+            conn.execute("INSERT INTO supplier_orders(order_id,supplier_id,product_ext,emails,status,error,cost,created_at,updated_at) "
+                         "VALUES(?,?,?,?,?,?,?,?,?)", (oid, si["supplier_id"], si["external_id"], emails,
+                                                       "attention" if held else "queued", held, cost, t, t))
+            audit(conn, None, "supplier_order", "order #%d queued for supplier (est. cost $%.2f)" % (oid, cost / 100))
         _close_if_sold_out(conn, v["pid"])
         return oid
 
@@ -312,6 +330,8 @@ def deliver_manual(conn, order_id, text):
         if not o or o["status"] != "processing":
             raise ApiError(409, "Only orders in 'processing' can be delivered")
         conn.execute("UPDATE orders SET status='completed', delivery_text=?, updated_at=? WHERE id=?", (text, now(), order_id))
+        conn.execute("UPDATE supplier_orders SET status='delivered', error='Delivered manually by an admin', updated_at=? WHERE order_id=? AND status IN ('queued','attention')",
+                     (now(), order_id))
 
 
 def refund_order(conn, order_id):
@@ -323,6 +343,9 @@ def refund_order(conn, order_id):
             conn.execute("UPDATE variations SET stock=stock+? WHERE id=?", (o["qty"], o["variation_id"]))
         credit(conn, o["user_id"], o["total"], "refund", order_id)
         conn.execute("UPDATE orders SET status='refunded', updated_at=? WHERE id=?", (now(), order_id))
+        # never forward a refunded order to the supplier later
+        conn.execute("UPDATE supplier_orders SET status='failed', error='Order refunded', updated_at=? WHERE order_id=? AND status IN ('queued','attention')",
+                     (now(), order_id))
 
 
 # ---------------------------------------------------------------- deposits

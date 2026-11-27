@@ -46,7 +46,7 @@
           "</span>" + vBadge(v) + '<b class="vp">' + money(v.price) + "</b></label>";
       }).join("") + "</div>" +
       '<div id="co" class="co" hidden><div class="qrow"><span>Quantity</span><div class="stepper"><button type="button" id="qm">−</button><input id="qty" type="number" value="1" min="1"><button type="button" id="qp">+</button></div></div>' +
-      '<div class="qrow"><input id="coupon" class="search" placeholder="Coupon code (optional)"><button class="btn btn-ghost btn-sm" id="capply" type="button">Apply</button></div>' +
+      '<div class="qrow" id="emrow" hidden><input id="semail" class="search" type="email" placeholder="Email to activate the subscription on" autocomplete="email"></div><div class="qrow"><input id="coupon" class="search" placeholder="Coupon code (optional)"><button class="btn btn-ghost btn-sm" id="capply" type="button">Apply</button></div>' +
       '<div class="note" id="note"></div><div class="total"><span>Total</span><b id="tot">$0.00</b></div>' +
       '<button class="btn btn-primary btn-lg" id="buy" style="width:100%"></button></div>');
     var el = m.el;
@@ -57,6 +57,8 @@
       var gross = Math.round(sel.price * 100) * q, disc = Math.floor(gross * pct / 100);
       $("#tot", el).textContent = money((gross - disc) / 100);
       $("#note", el).textContent = pct ? pct + "% coupon discount applied" : (sel.prebook ? "Currently sold out. Pre-order now and it will be delivered automatically when stock arrives, usually within a few hours." : "");
+      $("#emrow", el).hidden = !sel.needs_email;
+      if (sel.needs_email) { $("#qty", el).value = 1; }
       $("#buy", el).textContent = sel.prebook ? "Pre-order now" : "Buy now";
     }
     el.addEventListener("change", function (e) {
@@ -86,7 +88,7 @@
       C.me().then(function (u) {
         if (!u) { location.href = "account.html?next=" + encodeURIComponent(location.pathname.split("/").pop() + location.search); return; }
         return C.busy(b, function () {
-          return C.api("POST", "/api/buy", { variation_id: sel.id, qty: parseInt($("#qty", el).value, 10), coupon: $("#coupon", el).value })
+          return C.api("POST", "/api/buy", { variation_id: sel.id, qty: parseInt($("#qty", el).value, 10), coupon: $("#coupon", el).value, email: sel.needs_email ? $("#semail", el).value : "" })
             .then(function (d) { done(m, d.order); });
         });
       });

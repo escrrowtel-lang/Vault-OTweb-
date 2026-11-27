@@ -84,3 +84,11 @@ Setup: `sudo bash deploy/set-autopay.sh` (secrets `/etc/vault-store.env` mein), 
 - Har UTR / Binance transaction ek hi baar credit hota hai. Email submit se pehle aaye ya baad mein, dono chalta hai (poll har 30 sec).
 - Alert parser generic hai (Rs/INR/₹ amount + "credited" + UTR/Ref/RRN). Admin API `POST /api/admin/autopay/test-parse` {"text": "..."} se apne bank ki email ka sample check karo.
 - Binance sirf stablecoin (USDT/USDC/BUSD/FDUSD) auto-credit karta hai; baaki coin admin manual approve karta hai.
+
+## Supplier order forwarding (ProdSeller)
+Admin → Supplier API → add supplier: type `prodseller`, base URL `https://prodseller.com/v1`, header `X-API-Key`, your key.
+Test path is `/balance` (the `/v1` prefix is already in the base URL). Import products from `/products`.
+Orders for imported products are queued in the same transaction as the payment and sent with `POST /orders`
+(idempotency key `vaultstore-order-<id>`). Email-activation products ask the customer for an email at checkout.
+Supplier rejects (balance/stock/key) refund the customer automatically; network or 5xx errors retry, then show
+"Needs attention" with a Retry button. Everything is visible under Admin → Supplier API and Orders.

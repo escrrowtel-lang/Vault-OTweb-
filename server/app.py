@@ -19,6 +19,7 @@ import db
 import mailer
 import autopay
 import suppliers
+import fulfil
 import store
 from db import ApiError, connect, tx, to_cents, get_settings
 
@@ -189,7 +190,10 @@ def api_buy(r):
     if limited(("buy", r.user["id"]), 20, 60):
         raise ApiError(429, "Please wait a moment and try again")
     vid, qty = r.need("variation_id", "qty")
-    oid = store.buy(r.conn, r.user["id"], vid, qty, r.body.get("coupon", ""))
+    oid = store.buy(r.conn, r.user["id"], vid, qty, r.body.get("coupon", ""), str(r.body.get("email", ""))[:255])
+    so = r.conn.execute("SELECT id FROM supplier_orders WHERE order_id=? AND status='queued'", (oid,)).fetchone()
+    if so:
+        fulfil.kick(so["id"])
     o = r.conn.execute("SELECT * FROM orders WHERE id=?", (oid,)).fetchone()
     u = r.conn.execute("SELECT balance FROM users WHERE id=?", (r.user["id"],)).fetchone()
     return {"order": _order_json(o), "balance": u["balance"] / 100}
@@ -396,6 +400,10 @@ def adm_orders(r):
     for o in rows:
         d = _order_json(o)
         d["email"] = o["email"]
+        so = r.conn.execute("SELECT so.status, so.error, so.cost, so.external_id, s.name sname FROM supplier_orders so "
+                            "JOIN suppliers s ON s.id=so.supplier_id WHERE so.order_id=?", (o["id"],)).fetchone()
+        if so:
+            d["supplier"] = {"name": so["sname"], "status": so["status"], "error": so["error"], "cost": so["cost"] / 100, "ref": so["external_id"]}
         out.append(d)
     return {"orders": out}
 
@@ -543,6 +551,45 @@ def adm_supplier_test(r):
     if not row:
         raise ApiError(404, "Supplier not found")
     return suppliers.test(row, str(r.body.get("path", "/")))
+
+
+@route("GET", "/api/admin/supplier-orders", "admin")
+def adm_supplier_orders(r):
+    rows = r.conn.execute(
+        "SELECT so.id, so.order_id, so.status, so.error, so.cost, so.external_id, so.attempts, so.created_at, so.updated_at, s.name sname, "
+        "o.product_name, o.plan_name, o.qty, o.total, o.status ostatus FROM supplier_orders so JOIN suppliers s ON s.id=so.supplier_id "
+        "JOIN orders o ON o.id=so.order_id ORDER BY so.id DESC LIMIT 100").fetchall()
+    return {"items": [dict(x, cost=x["cost"] / 100, total=x["total"] / 100) for x in rows]}
+
+
+@route("POST", "/api/admin/supplier-order/retry", "admin")
+def adm_supplier_retry(r):
+    sid = _int(r.need("id")[0])
+    row = r.conn.execute("SELECT * FROM supplier_orders WHERE id=?", (sid,)).fetchone()
+    if not row or row["status"] != "attention":
+        raise ApiError(409, "Only orders that need attention can be retried")
+    o = r.conn.execute("SELECT status FROM orders WHERE id=?", (row["order_id"],)).fetchone()
+    if not o or o["status"] != "processing":
+        raise ApiError(409, "This order is no longer in processing")
+    r.conn.execute("UPDATE supplier_orders SET status='queued', attempts=0, error='', updated_at=? WHERE id=?", (store.now(), sid))
+    store.audit(r.conn, r.user["id"], "supplier_retry", "order #%s" % row["order_id"])
+    fulfil.kick(sid)
+    return {"ok": True}
+
+
+@route("POST", "/api/admin/supplier/balance", "admin")
+def adm_supplier_balance(r):
+    row = r.conn.execute("SELECT * FROM suppliers WHERE id=?", (_int(r.need("id")[0]),)).fetchone()
+    if not row:
+        raise ApiError(404, "Supplier not found")
+    status, _, text = suppliers.request(row, "/balance", timeout=10)
+    try:
+        j = json.loads(text)
+    except ValueError:
+        j = {}
+    if status != 200:
+        raise ApiError(502, "Supplier answered HTTP %d%s" % (status, (": " + str(j.get("error"))) if j.get("error") else ""))
+    return {"balance": j.get("balance"), "username": j.get("username"), "membership": j.get("membership")}
 
 
 @route("POST", "/api/admin/supplier/discover", "admin")
@@ -788,6 +835,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     db.init()
     autopay.start()
+    fulfil.start()
     host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", "8000"))
     srv = ThreadingHTTPServer((host, port), Handler)
     srv.daemon_threads = True

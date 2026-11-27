@@ -29,7 +29,8 @@ def mask(key):
 
 def public(row):
     return {"id": row["id"], "name": row["name"], "base_url": row["base_url"], "auth_mode": row["auth_mode"],
-            "auth_header": row["auth_header"], "active": bool(row["active"]), "key_hint": mask(row["api_key"]),
+            "auth_header": row["auth_header"], "active": bool(row["active"]), "kind": row["kind"], "auto_sync": bool(row["auto_sync"]),
+            "catalog_path": row["catalog_path"], "markup": row["markup"], "key_hint": mask(row["api_key"]),
             "has_key": bool(row["api_key"])}
 
 
@@ -63,25 +64,40 @@ def save(conn, data, existing_id=None):
     if len(key) > 500 or re.search(r"[\s\r\n]", key):
         raise ApiError(400, "Invalid API key")
     active = 1 if data.get("active", 1) in (1, True, "1") else 0
+    kind = data.get("kind", "generic")
+    if kind not in ("generic", "prodseller"):
+        raise ApiError(400, "Invalid API type")
+    sync = 1 if data.get("auto_sync", 0) in (1, True, "1") else 0
     with tx(conn):
         if existing_id:
             cur = conn.execute("SELECT * FROM suppliers WHERE id=?", (existing_id,)).fetchone()
             if not cur:
                 raise ApiError(404, "Supplier not found")
             key = key or cur["api_key"]  # blank = keep the saved key
-            conn.execute("UPDATE suppliers SET name=?,base_url=?,auth_mode=?,auth_header=?,api_key=?,active=? WHERE id=?",
-                         (name, base, mode, header, key, active, existing_id))
+            conn.execute("UPDATE suppliers SET name=?,base_url=?,auth_mode=?,auth_header=?,api_key=?,active=?,kind=?,auto_sync=? WHERE id=?",
+                         (name, base, mode, header, key, active, kind, sync, existing_id))
             return existing_id
-        return conn.execute("INSERT INTO suppliers(name,base_url,auth_mode,auth_header,api_key,active,created_at) VALUES(?,?,?,?,?,?,?)",
-                            (name, base, mode, header, key, active, store.now())).lastrowid
+        return conn.execute("INSERT INTO suppliers(name,base_url,auth_mode,auth_header,api_key,active,created_at,kind,auto_sync) VALUES(?,?,?,?,?,?,?,?,?)",
+                            (name, base, mode, header, key, active, store.now(), kind, sync)).lastrowid
 
 
-def request(row, path, timeout=10, limit=200_000):
-    """GET base_url + path using the stored key. Returns (status, content_type, text)."""
+def _join(base, path):
+    """base_url + path, without doubling a prefix the base already ends with (e.g. base .../v1 and path /v1/products)."""
+    bp = urllib.parse.urlparse(base).path.rstrip("/")
+    if bp and (path == bp or path.startswith(bp + "/")):
+        path = path[len(bp):] or "/"
+    return base + path
+
+
+def request(row, path, timeout=10, limit=200_000, method="GET", body=None, extra=None):
+    """Call base_url + path using the stored key. Returns (status, content_type, text)."""
     if not str(path).startswith("/") or "\n" in path or "\r" in path or " " in path:
-        raise ApiError(400, "Path must start with / (for example /v1/balance)")
-    url = check_url(row["base_url"]) + path
+        raise ApiError(400, "Path must start with / (for example /balance)")
+    url = _join(check_url(row["base_url"]), path)
     headers = {"Accept": "application/json", "User-Agent": "VaultStore/1"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    headers.update(extra or {})
     if row["api_key"]:
         if row["auth_mode"] == "bearer":
             headers["Authorization"] = "Bearer " + row["api_key"]
@@ -93,8 +109,9 @@ def request(row, path, timeout=10, limit=200_000):
             return None
 
     opener = urllib.request.build_opener(NoRedirect)
+    data = json.dumps(body).encode() if body is not None else None
     try:
-        with opener.open(urllib.request.Request(url, headers=headers), timeout=timeout) as r:
+        with opener.open(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=timeout) as r:
             return r.status, r.headers.get("Content-Type", ""), r.read(limit).decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, e.headers.get("Content-Type", ""), e.read(20_000).decode("utf-8", "replace")
@@ -177,9 +194,13 @@ def normalize(j, cents_unit=False):
         if isinstance(c, dict):
             c = _get(c, ["name", "title"])
         stock = _get(it, ["stock", "quantity", "qty", "available", "inStock", "in_stock"])
+        if stock is None and "stock" in {str(k).lower() for k in it}:
+            stock = _get(it, ["inStock", "in_stock"])  # stock: null (custom delivery) + inStock flag
         note = ""
         if isinstance(stock, bool):
-            stock, note = (1 if stock else 0), "availability only"
+            stock, note = (999 if stock else 0), "availability only"
+        elif stock is None and isinstance(_get(it, ["inStock", "in_stock", "available"]), bool):
+            stock, note = (999 if _get(it, ["inStock", "in_stock", "available"]) else 0), "availability only"
         else:
             try:
                 stock = max(0, int(float(stock))) if stock is not None else 0
@@ -190,7 +211,7 @@ def normalize(j, cents_unit=False):
             img = _get(img, ["url", "src"])
         items.append({"ext": str(ext)[:120], "name": str(name).strip()[:120], "category": str(c or cat or "General")[:60],
                       "description": str(_get(it, ["description", "desc", "details", "about"]) or "")[:2000],
-                      "cost": price, "stock": stock, "stock_note": note, "image": img if isinstance(img, str) else ""})
+                      "cost": price, "needs_email": bool(_get(it, ["requiresEmailActivation", "requires_email_activation", "requiresEmail"])), "stock": stock, "stock_note": note, "image": img if isinstance(img, str) else ""})
     return items
 
 
@@ -257,16 +278,23 @@ def import_catalog(conn, row, path, markup_pct, cents_unit, dry=True):
             m = conn.execute("SELECT * FROM supplier_items WHERE supplier_id=? AND external_id=?", (row["id"], it["ext"])).fetchone()
             if m:  # re-sync: refresh price and stock only, keep the admin's own edits to name/description/image
                 conn.execute("UPDATE variations SET price=?, stock=? WHERE id=?", (it["price"], it["stock"], m["variation_id"]))
-                conn.execute("UPDATE supplier_items SET cost=? WHERE id=?", (it["cost"], m["id"]))
+                conn.execute("UPDATE supplier_items SET cost=?, needs_email=? WHERE id=?", (it["cost"], 1 if it["needs_email"] else 0, m["id"]))
                 updated += 1
                 continue
             pid = conn.execute("INSERT INTO products(category_id,name,description,mode,glyph,color) VALUES(?,?,?,?,?,?)",
                                (cid, it["name"], it["description"], "manual", "mono", "#0ea5e9")).lastrowid
             vid = conn.execute("INSERT INTO variations(product_id,name,price,min_qty,max_qty,stock) VALUES(?,?,?,?,?,?)",
-                               (pid, "Standard", it["price"], 1, 1, it["stock"])).lastrowid
-            conn.execute("INSERT INTO supplier_items(supplier_id,external_id,product_id,variation_id,cost) VALUES(?,?,?,?,?)",
-                         (row["id"], it["ext"], pid, vid, it["cost"]))
+                               (pid, "Standard", it["price"], 1, 10 if row["kind"] == "prodseller" else 1, it["stock"])).lastrowid
+            conn.execute("INSERT INTO supplier_items(supplier_id,external_id,product_id,variation_id,cost,needs_email) VALUES(?,?,?,?,?,?)",
+                         (row["id"], it["ext"], pid, vid, it["cost"], 1 if it["needs_email"] else 0))
             created += 1
+    # products the supplier no longer lists become unavailable instead of keeping stale stock
+    seen = {it["ext"] for it in items}
+    with tx(conn):
+        for m in conn.execute("SELECT external_id, variation_id FROM supplier_items WHERE supplier_id=?", (row["id"],)).fetchall():
+            if m["external_id"] not in seen:
+                conn.execute("UPDATE variations SET stock=0 WHERE id=?", (m["variation_id"],))
+        conn.execute("UPDATE suppliers SET catalog_path=?, markup=?, cents=? WHERE id=?", (path, str(markup_pct), 1 if cents_unit else 0, row["id"]))
     # images (outside the DB transaction), bounded so one request cannot run forever
     t0, imgs = time.time(), 0
     for it in items:
