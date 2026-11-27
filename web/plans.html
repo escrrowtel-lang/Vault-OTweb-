@@ -22,9 +22,11 @@
 <div class="wrap">
 <div id="plans-notice"></div>
 <div class="bar">
-<input class="search" id="q" type="search" placeholder="Search plans or services…" aria-label="Search">
+<input class="search" id="q" type="search" placeholder="Search your next favourite tool…" aria-label="Search">
+<select class="search" id="sort" aria-label="Sort by" style="max-width:210px"><option value="featured">Sort: Featured</option><option value="low">Price: low to high</option><option value="high">Price: high to low</option><option value="name">Name: A to Z</option></select>
 </div>
-<div class="tabs" id="tabs" style="margin-bottom:22px"></div>
+<div class="tabs" id="tabs" style="margin-bottom:14px"></div>
+<div class="fbar"><button class="tab" id="stockf" type="button">In stock only</button><span class="muted small" id="count"></span></div>
 <div class="grid g-plans" id="plans"></div>
 </div>
 </section>

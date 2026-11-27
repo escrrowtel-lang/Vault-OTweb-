@@ -13,11 +13,14 @@
     if (v.stock > 0) return v.stock <= 5 ? '<span class="badge b-low">Only ' + v.stock + " left</span>" : '<span class="badge b-in">In stock</span>';
     return v.prebook ? '<span class="badge b-pre">Pre-order</span>' : '<span class="badge b-out">Sold out</span>';
   }
-  function prodCard(p, cat, ci) {
-    var st = state(p);
-    return '<button class="card prod" data-p="' + p.id + '">' + C.icon(p, 56) +
-      '<div class="pinfo"><div class="cat-name">' + esc(cat.name) + '</div><div class="pname">' + esc(p.name) + "</div>" +
-      '<div class="pfrom">From <b>' + money(fromPrice(p)) + '</b></div></div><span class="badge ' + st[0] + '">' + st[1] + "</span></button>";
+  function prodCard(p, cat) {
+    var st = state(p), dead = st[1] === "Sold out";
+    var media = p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy">' : C.icon(p, 84);
+    return '<button class="card pcard" data-p="' + p.id + '"><div class="pmedia' + (p.image ? " has-img" : "") + '">' + media + "</div>" +
+      '<div class="pmeta"><span class="stock ' + st[0] + '"><i></i>' + st[1] + "</span><span>" + esc(cat.name) + "</span></div>" +
+      '<div class="pname">' + esc(p.name) + "</div>" +
+      '<div class="pdesc">' + esc((p.description || "").replace(/\s+/g, " ").slice(0, 140)) + "</div>" +
+      '<div class="pfoot"><div class="pprice"><small>Your price</small><b>' + money(fromPrice(p)) + '</b></div><span class="btn ' + (dead ? "btn-ghost" : "btn-primary") + ' btn-sm">' + (dead ? "View details" : st[1] === "Pre-order" ? "Pre-order" : "Buy now") + "</span></div></button>";
   }
   function catCard(c, ci) {
     var n = c.products.length;
@@ -119,7 +122,7 @@
       var pop = $("#popular");
       if (pop) {
         var all = [];
-        d.forEach(function (c, ci) { c.products.forEach(function (p) { if (state(p)[1] === "In stock") all.push(prodCard(p, c, ci)); }); });
+        d.forEach(function (c, ci) { c.products.forEach(function (p) { if (state(p)[1] === "In stock") all.push(prodCard(p, c)); }); });
         pop.innerHTML = all.slice(0, 6).join("") || '<div class="empty">No plans are in stock right now.</div>';
       }
     }).catch(function () { cats.innerHTML = '<div class="empty">Could not load the catalog. Please try again shortly.</div>'; });
@@ -127,25 +130,33 @@
 
   var list = $("#plans");
   if (list) {
-    var st = { cat: new URLSearchParams(location.search).get("cat") || "all", q: "" };
+    var st = { cat: new URLSearchParams(location.search).get("cat") || "all", q: "", sort: "featured", stock: false };
     var render = function () {
       $("#tabs").innerHTML = '<button class="tab' + (st.cat === "all" ? " on" : "") + '" data-c="all">All</button>' + data.map(function (c) {
         return '<button class="tab' + (String(c.id) === st.cat ? " on" : "") + '" data-c="' + c.id + '">' + esc(c.name) + "</button>";
       }).join("");
       var out = [];
-      data.forEach(function (c, ci) {
+      data.forEach(function (c) {
         if (st.cat !== "all" && String(c.id) !== st.cat) return;
         c.products.forEach(function (p) {
-          if (!st.q || (p.name + " " + c.name + " " + p.variations.map(function (v) { return v.name; }).join(" ")).toLowerCase().indexOf(st.q) > -1) out.push(prodCard(p, c, ci));
+          if (st.stock && state(p)[1] !== "In stock") return;
+          if (!st.q || (p.name + " " + c.name + " " + p.variations.map(function (v) { return v.name; }).join(" ")).toLowerCase().indexOf(st.q) > -1) out.push([p, c]);
         });
       });
-      list.innerHTML = out.join("") || '<div class="empty">No results found.</div>';
+      if (st.sort === "low") out.sort(function (x, y) { return fromPrice(x[0]) - fromPrice(y[0]); });
+      else if (st.sort === "high") out.sort(function (x, y) { return fromPrice(y[0]) - fromPrice(x[0]); });
+      else if (st.sort === "name") out.sort(function (x, y) { return x[0].name.localeCompare(y[0].name); });
+      var cnt = $("#count"); if (cnt) cnt.textContent = out.length + (out.length === 1 ? " product" : " products");
+      var sb = $("#stockf"); if (sb) sb.classList.toggle("on", st.stock);
+      list.innerHTML = out.map(function (x) { return prodCard(x[0], x[1]); }).join("") || '<div class="empty">No results found.</div>';
     };
     list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     var refresh = function () { return load().then(render); };
     refresh().catch(function () { list.innerHTML = '<div class="empty">Could not load the catalog.</div>'; });
     setInterval(function () { if (!document.querySelector(".overlay")) refresh().catch(function () {}); }, 30000);
     $("#tabs").addEventListener("click", function (e) { var t = e.target.closest("[data-c]"); if (t) { st.cat = t.dataset.c; render(); } });
+    $("#sort").addEventListener("change", function (e) { st.sort = e.target.value; render(); });
+    $("#stockf").addEventListener("click", function () { st.stock = !st.stock; render(); });
     $("#q").addEventListener("input", function (e) { st.q = e.target.value.trim().toLowerCase(); render(); });
   }
 })();
