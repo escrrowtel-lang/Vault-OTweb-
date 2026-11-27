@@ -157,15 +157,32 @@ def available(conn, variation_id, mode):
     return conn.execute("SELECT stock FROM variations WHERE id=?", (variation_id,)).fetchone()["stock"]
 
 
+def stock_map(conn):
+    """Available stock for every variation in two queries (auto = unsold inventory rows, manual = variations.stock)."""
+    inv = {r["variation_id"]: r["n"] for r in conn.execute(
+        "SELECT variation_id, COUNT(*) n FROM inventory WHERE status='available' GROUP BY variation_id").fetchall()}
+    return inv
+
+
+def _group(rows, key):
+    d = {}
+    for r in rows:
+        d.setdefault(r[key], []).append(r)
+    return d
+
+
 def public_catalog(conn):
     out = []
     needs = {r["variation_id"] for r in conn.execute("SELECT variation_id FROM supplier_items WHERE needs_email=1").fetchall()}
-    for c in conn.execute("SELECT * FROM categories WHERE active=1 ORDER BY position,id"):
+    inv = stock_map(conn)
+    prods_by_cat = _group(conn.execute("SELECT * FROM products WHERE active=1 ORDER BY position,id").fetchall(), "category_id")
+    vars_by_prod = _group(conn.execute("SELECT * FROM variations WHERE active=1 ORDER BY position,price,id").fetchall(), "product_id")
+    for c in conn.execute("SELECT * FROM categories WHERE active=1 ORDER BY position,id").fetchall():
         prods = []
-        for p in conn.execute("SELECT * FROM products WHERE category_id=? AND active=1 ORDER BY position,id", (c["id"],)):
+        for p in prods_by_cat.get(c["id"], []):
             vs = []
-            for v in conn.execute("SELECT * FROM variations WHERE product_id=? AND active=1 ORDER BY position,price,id", (p["id"],)):
-                stock = available(conn, v["id"], p["mode"])
+            for v in vars_by_prod.get(p["id"], []):
+                stock = inv.get(v["id"], 0) if p["mode"] == "auto" else v["stock"]
                 vs.append({"id": v["id"], "name": v["name"], "price": v["price"] / 100, "stock": stock,
                            "min_qty": v["min_qty"], "max_qty": v["max_qty"],
                            "prebook": p["mode"] == "auto" and stock == 0, "needs_email": v["id"] in needs})

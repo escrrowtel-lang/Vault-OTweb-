@@ -272,17 +272,20 @@ def adm_stats(r):
 
 @route("GET", "/api/admin/catalog", "admin")
 def adm_catalog(r):
+    inv = store.stock_map(r.conn)
+    prods = store._group(r.conn.execute("SELECT * FROM products ORDER BY position,id").fetchall(), "category_id")
+    vars_ = store._group(r.conn.execute("SELECT * FROM variations ORDER BY position,id").fetchall(), "product_id")
     out = []
-    for c in r.conn.execute("SELECT * FROM categories ORDER BY position,id"):
+    for c in r.conn.execute("SELECT * FROM categories ORDER BY position,id").fetchall():
         cd = rowdict(c)
         cd["products"] = []
-        for p in r.conn.execute("SELECT * FROM products WHERE category_id=? ORDER BY position,id", (c["id"],)):
+        for p in prods.get(c["id"], []):
             pd = rowdict(p)
             pd["variations"] = []
-            for v in r.conn.execute("SELECT * FROM variations WHERE product_id=? ORDER BY position,id", (p["id"],)):
+            for v in vars_.get(p["id"], []):
                 vd = rowdict(v)
                 vd["price"] = vd["price"] / 100
-                vd["available"] = store.available(r.conn, v["id"], p["mode"])
+                vd["available"] = inv.get(v["id"], 0) if p["mode"] == "auto" else v["stock"]
                 pd["variations"].append(vd)
             cd["products"].append(pd)
         out.append(cd)
@@ -714,8 +717,21 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def send_json(self, status, obj, cookie=None):
+        try:
+            self._send_json(status, obj, cookie)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True  # the browser gave up waiting; nothing more to send
+
+    def _send_json(self, status, obj, cookie=None):
         body = json.dumps(obj).encode()
+        gz = len(body) > 1400 and "gzip" in (self.headers.get("Accept-Encoding") or "")
+        if gz:
+            import gzip
+            body = gzip.compress(body, 5)
         self.send_response(status)
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
