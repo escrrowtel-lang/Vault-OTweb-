@@ -110,17 +110,29 @@
     var m = modal(html);
     var form = $("form", m.el);
     form.querySelectorAll("[data-up]").forEach(function (inp) {
+      var holder = inp.parentNode, msg = $(".upmsg", holder);
+      var prev = document.createElement("div"); prev.className = "upprev"; holder.appendChild(prev);
+      var show = function (url) {
+        prev.innerHTML = url ? icon({ image: url }, 72) + ' <button type="button" class="btn btn-ghost btn-sm">Remove</button>' : "";
+        msg.textContent = url ? "App icon set" : "No image (the icon glyph will be used)";
+        var rm = $("button", prev); if (rm) rm.onclick = function () { form.elements[inp.dataset.up].value = ""; show(""); };
+      };
+      show(form.elements[inp.dataset.up].value);
       inp.onchange = function () {
         var file = inp.files[0]; if (!file) return;
-        if (file.size > 1000000) { toast("Image must be under 1 MB", true); return; }
-        var rd = new FileReader();
-        rd.onload = function () {
-          api("POST", "/api/admin/upload", { data: String(rd.result).split(",")[1] }).then(function (d) {
-            form.elements[inp.dataset.up].value = d.url;
-            $(".upmsg", inp.parentNode).textContent = "Uploaded: " + d.url;
+        var url = URL.createObjectURL(file), img = new Image();
+        img.onerror = function () { toast("Could not read this image", true); };
+        img.onload = function () {
+          /* centre-crop to a square and scale to 256x256 so any logo fits the app-icon tile */
+          var side = Math.min(img.naturalWidth, img.naturalHeight), cv = document.createElement("canvas");
+          cv.width = cv.height = 256;
+          cv.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 256, 256);
+          URL.revokeObjectURL(url);
+          api("POST", "/api/admin/upload", { data: cv.toDataURL("image/png").split(",")[1] }).then(function (d) {
+            form.elements[inp.dataset.up].value = d.url; show(d.url);
           }).catch(function (e) { toast(e.message, true); });
         };
-        rd.readAsDataURL(file);
+        img.src = url;
       };
     });
     form.onsubmit = function (e) {

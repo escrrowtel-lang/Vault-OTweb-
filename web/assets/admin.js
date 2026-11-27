@@ -107,7 +107,7 @@
         { k: "name", label: "Product name" }, { k: "description", label: "Description (activation steps etc.)", type: "textarea", rows: 5 },
         { k: "mode", label: "Delivery mode", type: "select", options: [["auto", "AUTO (instant, from inventory)"], ["manual", "MANUAL (delivered by an admin)"]] },
         { k: "glyph", label: "Icon glyph", type: "select", options: C.glyphs.map(function (g) { return [g, g]; }) },
-        { k: "color", label: "Icon colour", type: "color", def: "#4f46e5" },
+        { k: "color", label: "Icon colour", type: "color", def: "#0ea5e9" },
         { k: "image", label: "Custom icon image (optional, PNG/JPG/WEBP)", type: "image", help: "Only upload images you have the right to use." },
         { k: "quick_drop", label: "Quick drop (hide automatically when sold out)", type: "checkbox" },
         { k: "position", label: "Sort order", type: "number", def: 0 }, { k: "active", label: "Visible", type: "checkbox", def: 1 }];
