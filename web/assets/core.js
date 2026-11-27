@@ -120,19 +120,21 @@
       show(form.elements[inp.dataset.up].value);
       inp.onchange = function () {
         var file = inp.files[0]; if (!file) return;
-        var url = URL.createObjectURL(file), img = new Image();
-        img.onerror = function () { toast("Could not read this image", true); };
+        var url = "", img = new Image();
+        img.onerror = function () { toast("Could not read this image. Use a PNG, JPG or WebP file.", true); };
         img.onload = function () {
           /* centre-crop to a square and scale to 256x256 so any logo fits the app-icon tile */
           var side = Math.min(img.naturalWidth, img.naturalHeight), cv = document.createElement("canvas");
           cv.width = cv.height = 256;
           cv.getContext("2d").drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 256, 256);
-          URL.revokeObjectURL(url);
           api("POST", "/api/admin/upload", { data: cv.toDataURL("image/png").split(",")[1] }).then(function (d) {
             form.elements[inp.dataset.up].value = d.url; show(d.url);
           }).catch(function (e) { toast(e.message, true); });
         };
-        img.src = url;
+        var fr = new FileReader();
+        fr.onerror = img.onerror;
+        fr.onload = function () { img.src = fr.result; };
+        fr.readAsDataURL(file);
       };
     });
     form.onsubmit = function (e) {
