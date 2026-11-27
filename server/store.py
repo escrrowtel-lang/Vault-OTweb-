@@ -170,10 +170,10 @@ def public_catalog(conn):
                            "min_qty": v["min_qty"], "max_qty": v["max_qty"],
                            "prebook": p["mode"] == "auto" and stock == 0, "needs_email": v["id"] in needs})
             if vs:
-                prods.append({"id": p["id"], "name": p["name"], "description": p["description"], "image": p["image"],
+                prods.append({"id": p["id"], "name": p["name"], "description": p["description"], "image": p["image"] or c["image"],
                               "glyph": p["glyph"], "color": p["color"], "mode": p["mode"], "variations": vs})
         if prods:
-            out.append({"id": c["id"], "name": c["name"], "emoji": c["emoji"], "products": prods})
+            out.append({"id": c["id"], "name": c["name"], "emoji": c["emoji"], "image": c["image"], "products": prods})
     return out
 
 

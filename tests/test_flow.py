@@ -595,3 +595,19 @@ class SupplierFulfil(unittest.TestCase):
         self.sp.request = lambda *a, **k: self.fail("must not be sent")
         self.fulfil.forward(conn, so["id"])
         self.assertEqual(conn.execute("SELECT status FROM supplier_orders WHERE id=?", (so["id"],)).fetchone()["status"], "failed")
+
+
+class VariantsAndCategoryImage(unittest.TestCase):
+    def test_variants_expand_and_zero_result_shows_structure(self):
+        import suppliers as sp
+        j = {"products": [{"id": "n1", "name": "Netflix", "category": "Streaming", "variants": [{"id": "v1", "name": "1 Month", "price": "4.5"}]}]}
+        it = sp.normalize(j)
+        self.assertEqual((it[0]["name"], it[0]["cost"]), ("Netflix - 1 Month", 450))
+        self.assertIn("products", sp.describe({"products": [{"x": 1}]}))
+
+    def test_category_image_fallback(self):
+        cid = conn.execute("INSERT INTO categories(name,image) VALUES('CI','/uploads/c.png')").lastrowid
+        pid = conn.execute("INSERT INTO products(category_id,name,mode) VALUES(?,?,?)", (cid, "NoImg", "manual")).lastrowid
+        conn.execute("INSERT INTO variations(product_id,name,price,min_qty,max_qty,stock) VALUES(?,?,?,1,3,5)", (pid, "X", 100))
+        cat = [c for c in store.public_catalog(conn) if c["id"] == cid]
+        self.assertEqual(cat[0]["products"][0]["image"], "/uploads/c.png")

@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS categories(
   name TEXT NOT NULL,
   emoji TEXT NOT NULL DEFAULT '',
   position INTEGER NOT NULL DEFAULT 0,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  image TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS products(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -320,7 +321,8 @@ def tx(conn):
 
 MIGRATIONS = [("suppliers", "kind", "TEXT NOT NULL DEFAULT 'generic'"), ("suppliers", "catalog_path", "TEXT NOT NULL DEFAULT ''"),
               ("suppliers", "markup", "TEXT NOT NULL DEFAULT '20'"), ("suppliers", "cents", "INTEGER NOT NULL DEFAULT 0"),
-              ("suppliers", "auto_sync", "INTEGER NOT NULL DEFAULT 0"), ("supplier_items", "needs_email", "INTEGER NOT NULL DEFAULT 0")]
+              ("suppliers", "auto_sync", "INTEGER NOT NULL DEFAULT 0"), ("supplier_items", "needs_email", "INTEGER NOT NULL DEFAULT 0"),
+              ("categories", "image", "TEXT NOT NULL DEFAULT ''")]
 
 
 def _migrate(c):

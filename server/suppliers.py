@@ -181,9 +181,50 @@ def to_cents(v, cents_unit):
     return int((d * 100).to_integral_value(ROUND_HALF_UP))
 
 
+VARIANT_KEYS = ["variants", "plans", "options", "durations", "tiers", "packages", "pricing", "prices", "skus", "editions"]
+
+
+def _expand(cat, it):
+    """A product without its own price but with a list of priced variants (durations, plans) becomes one item per variant."""
+    if _get(it, ["price", "resellerPrice", "reseller_price", "unitPrice", "unit_price", "wholesalePrice", "wholesale_price"]) is not None:
+        return [(cat, it)]
+    for k in VARIANT_KEYS:
+        v = _get(it, [k])
+        if isinstance(v, dict):
+            v = [dict(val, name=val.get("name", key)) if isinstance(val, dict) else {"name": key, "price": val} for key, val in v.items()]
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            out = []
+            base = str(_get(it, ["name", "title", "productName", "product_name"]) or "")
+            for x in v:
+                vn = _get(x, ["name", "title", "label", "duration", "period", "plan"])
+                x = dict(x)
+                x["name"] = ("%s - %s" % (base, vn) if vn else base)
+                for kk in ("category", "categoryName", "image", "imageUrl", "image_url", "description", "requiresEmailActivation"):
+                    if _get(x, [kk]) is None and _get(it, [kk]) is not None:
+                        x[kk] = it[kk]
+                if _get(x, ["id", "_id", "productId", "product_id", "sku", "uuid", "slug", "code"]) is None:
+                    continue
+                out.append((cat, x))
+            if out:
+                return out
+    return [(cat, it)]
+
+
+def describe(j, limit=700):
+    """Short structural summary of a JSON reply, for the admin when no products are recognised (never contains headers or keys)."""
+    def shape(v, d=0):
+        if isinstance(v, dict):
+            return {k: shape(x, d + 1) if d < 2 else type(x).__name__ for k, x in list(v.items())[:12]}
+        if isinstance(v, list):
+            return [shape(v[0], d + 1)] if v else []
+        return v if isinstance(v, (int, float, bool)) or v is None else str(v)[:40]
+    return json.dumps(shape(j), ensure_ascii=False)[:limit]
+
+
 def normalize(j, cents_unit=False):
     items = []
-    for cat, it in extract(j):
+    flat = [pair for c0, it0 in extract(j) for pair in _expand(c0, it0)]
+    for cat, it in flat:
         price = to_cents(_get(it, ["resellerPrice", "reseller_price", "wholesale_price", "wholesalePrice", "price", "unitPrice", "unit_price",
                                    "sellPrice", "sell_price", "cost", "rate", "amount"]), cents_unit)
         name = _get(it, ["name", "title", "productName", "product_name"])
@@ -262,7 +303,11 @@ def import_catalog(conn, row, path, markup_pct, cents_unit, dry=True):
     except ValueError:
         raise ApiError(400, "The supplier did not return JSON")
     if not items:
-        raise ApiError(400, "No products found in this response. Check the path.")
+        try:
+            shape = describe(json.loads(body))
+        except ValueError:
+            shape = ""
+        raise ApiError(400, "No products recognised in this response. Structure received: %s" % shape)
     k = Decimal(1) + Decimal(str(markup_pct)) / 100
     for it in items:
         it["price"] = int((Decimal(it["cost"]) * k).to_integral_value(ROUND_HALF_UP))

@@ -101,7 +101,7 @@
       el.innerHTML = h;
       var findProd = function (id) { for (var i = 0; i < cats.length; i++) for (var j = 0; j < cats[i].products.length; j++) if (cats[i].products[j].id === id) return cats[i].products[j]; };
       var findVar = function (id) { for (var i = 0; i < cats.length; i++) for (var j = 0; j < cats[i].products.length; j++) for (var k = 0; k < cats[i].products[j].variations.length; k++) if (cats[i].products[j].variations[k].id === id) return [cats[i].products[j].variations[k], cats[i].products[j]]; };
-      var catF = [{ k: "name", label: "Name" }, { k: "position", label: "Sort order (lowest first)", type: "number", def: 0 }, { k: "active", label: "Visible", type: "checkbox", def: 1 }];
+      var catF = [{ k: "name", label: "Name" }, { k: "image", label: "Category image (used for every product in it that has no own image)", type: "image" }, { k: "position", label: "Sort order (lowest first)", type: "number", def: 0 }, { k: "active", label: "Visible", type: "checkbox", def: 1 }];
       var prodF = [
         { k: "category_id", label: "Category", type: "select", options: cats.map(function (c) { return [c.id, c.name]; }) },
         { k: "name", label: "Product name" }, { k: "description", label: "Description (activation steps etc.)", type: "textarea", rows: 5 },

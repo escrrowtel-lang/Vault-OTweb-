@@ -319,11 +319,11 @@ def adm_category(r):
     if not str(name).strip():
         raise ApiError(400, "Name is required")
     if b.get("id"):
-        r.conn.execute("UPDATE categories SET name=?,emoji=?,position=?,active=? WHERE id=?",
-                       (str(name).strip(), str(b.get("emoji", ""))[:8], _int(b.get("position")), _b(b.get("active", 1)), _int(b["id"])))
+        r.conn.execute("UPDATE categories SET name=?,emoji=?,position=?,active=?,image=? WHERE id=?",
+                       (str(name).strip(), str(b.get("emoji", ""))[:8], _int(b.get("position")), _b(b.get("active", 1)), _image(b.get("image")), _int(b["id"])))
     else:
-        r.conn.execute("INSERT INTO categories(name,emoji,position,active) VALUES(?,?,?,?)",
-                       (str(name).strip(), str(b.get("emoji", ""))[:8], _int(b.get("position")), _b(b.get("active", 1))))
+        r.conn.execute("INSERT INTO categories(name,emoji,position,active,image) VALUES(?,?,?,?,?)",
+                       (str(name).strip(), str(b.get("emoji", ""))[:8], _int(b.get("position")), _b(b.get("active", 1)), _image(b.get("image"))))
     return {"ok": True}
 
 
