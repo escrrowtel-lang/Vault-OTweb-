@@ -159,8 +159,13 @@
       '<button class="burger" aria-label="Menu" id="burger">☰</button><nav id="menu">' +
       nav.map(function (l) { return '<a href="' + l[0] + '"' + (path === l[0] ? ' class="on"' : "") + ">" + l[1] + "</a>"; }).join("") +
       (user ? ((user.is_admin ? '<a href="admin.html">Admin</a>' : "") + '<a class="btn btn-primary btn-sm" href="account.html">' + money(user.balance) + " · Account</a>")
-        : '<a class="btn btn-primary btn-sm" href="account.html">Login / Sign up</a>') + "</nav></div></header>";
+        : '<a class="btn btn-primary btn-sm" href="account.html">Login / Sign up</a>') + '<button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Light / dark">☾</button></nav></div></header>';
     var el = $("#site-header"); if (el) el.outerHTML = h;
+    var tt = $("#themeToggle"); if (tt) tt.onclick = function () {
+      var dark = document.documentElement.getAttribute("data-theme") === "dark";
+      if (dark) document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", "dark");
+      try { localStorage.setItem("vs_theme", dark ? "light" : "dark"); } catch (e) {}
+    };
     var b = $("#burger"); if (b) b.onclick = function () { $("#menu").classList.toggle("open"); };
   }
   function renderFooter() {
