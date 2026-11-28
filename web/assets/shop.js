@@ -13,14 +13,22 @@
     if (v.stock > 0) return v.stock <= 5 ? '<span class="badge b-low">Only ' + v.stock + " left</span>" : '<span class="badge b-in">In stock</span>';
     return v.prebook ? '<span class="badge b-pre">Pre-order</span>' : '<span class="badge b-out">Sold out</span>';
   }
+  function tags(p) {
+    var t = [];
+    if (p.mode === "auto" && p.variations.some(function (v) { return v.stock > 0; })) t.push('<span class="tag t-fast">⚡ Instant</span>');
+    if (p.variations.some(function (v) { return v.needs_email; })) t.push('<span class="tag">✉ Email activation</span>');
+    if (p.variations.length > 1) t.push('<span class="tag">' + p.variations.length + " plans</span>");
+    return t.join("");
+  }
   function prodCard(p, cat) {
     var st = state(p), dead = st[1] === "Sold out";
     var media = p.image ? '<img src="' + esc(p.image) + '" alt="" loading="lazy">' : C.icon(p, 84);
     return '<button class="card pcard" data-p="' + p.id + '"><div class="pmedia' + (p.image ? " has-img" : "") + '">' + media + "</div>" +
+      '<div class="tags">' + tags(p) + "</div>" +
       '<div class="pmeta"><span class="stock ' + st[0] + '"><i></i>' + st[1] + "</span><span>" + esc(cat.name) + "</span></div>" +
       '<div class="pname">' + esc(p.name) + "</div>" +
       '<div class="pdesc">' + esc((p.description || "").replace(/\s+/g, " ").slice(0, 140)) + "</div>" +
-      '<div class="pfoot"><div class="pprice"><small>Your price</small><b>' + money(fromPrice(p)) + '</b></div><span class="btn ' + (dead ? "btn-ghost" : "btn-primary") + ' btn-sm">' + (dead ? "View details" : st[1] === "Pre-order" ? "Pre-order" : "Buy now") + "</span></div></button>";
+      '<div class="pfoot"><div class="pprice"><small>' + (p.variations.length > 1 ? "From" : "Your price") + "</small><b>" + money(fromPrice(p)) + '</b></div><span class="btn ' + (dead ? "btn-ghost" : "btn-primary") + ' btn-sm">' + (dead ? "View details" : st[1] === "Pre-order" ? "Pre-order" : "Buy now") + "</span></div></button>";
   }
   function catCard(c, ci) {
     var n = c.products.length;
@@ -132,33 +140,65 @@
 
   var list = $("#plans");
   if (list) {
-    var st = { cat: new URLSearchParams(location.search).get("cat") || "all", q: "", sort: "featured", stock: false };
+    var ls = function (k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) {} return null; };
+    var base = { cat: new URLSearchParams(location.search).get("cat") || "all", q: "", sort: ls("vs_sort") || "featured", stock: false, instant: false, pre: false, min: "", max: "", view: ls("vs_view") || "grid" };
+    var st = Object.assign({}, base);
+    var qs = function (id) { return document.getElementById(id); };
+    var sync = function () {
+      qs("sort").value = st.sort; qs("pmin").value = st.min; qs("pmax").value = st.max; qs("q").value = st.q;
+      qs("f-stock").checked = st.stock; qs("f-instant").checked = st.instant; qs("f-pre").checked = st.pre;
+      document.querySelectorAll(".vtoggle button").forEach(function (b) { b.classList.toggle("on", b.dataset.v === st.view); });
+      list.classList.toggle("as-list", st.view === "list");
+    };
+    var pass = function (p, c, skipCat) {
+      if (!skipCat && st.cat !== "all" && String(c.id) !== st.cat) return false;
+      var s = state(p)[1], lo = fromPrice(p);
+      if (st.stock && s !== "In stock") return false;
+      if (st.instant && !(p.mode === "auto" && s === "In stock")) return false;
+      if (st.pre && s !== "Pre-order") return false;
+      if (st.min !== "" && lo < parseFloat(st.min)) return false;
+      if (st.max !== "" && lo > parseFloat(st.max)) return false;
+      return !st.q || (p.name + " " + c.name + " " + p.variations.map(function (v) { return v.name; }).join(" ")).toLowerCase().indexOf(st.q) > -1;
+    };
     var render = function () {
-      $("#tabs").innerHTML = '<button class="tab' + (st.cat === "all" ? " on" : "") + '" data-c="all">All</button>' + data.map(function (c) {
+      var counts = {}, total = 0;
+      data.forEach(function (c) { counts[c.id] = c.products.filter(function (p) { return pass(p, c, true); }).length; total += counts[c.id]; });
+      var row = function (id, name, n) { return '<button class="crow' + (String(id) === st.cat ? " on" : "") + '" data-c="' + id + '"><span>' + esc(name) + "</span><em>" + n + "</em></button>"; };
+      qs("cats-list").innerHTML = row("all", "All products", total) + data.map(function (c) { return row(c.id, c.name, counts[c.id]); }).join("");
+      qs("tabs").innerHTML = '<button class="tab' + (st.cat === "all" ? " on" : "") + '" data-c="all">All</button>' + data.map(function (c) {
         return '<button class="tab' + (String(c.id) === st.cat ? " on" : "") + '" data-c="' + c.id + '">' + esc(c.name) + "</button>";
       }).join("");
       var out = [];
-      data.forEach(function (c) {
-        if (st.cat !== "all" && String(c.id) !== st.cat) return;
-        c.products.forEach(function (p) {
-          if (st.stock && state(p)[1] !== "In stock") return;
-          if (!st.q || (p.name + " " + c.name + " " + p.variations.map(function (v) { return v.name; }).join(" ")).toLowerCase().indexOf(st.q) > -1) out.push([p, c]);
-        });
-      });
+      data.forEach(function (c) { c.products.forEach(function (p) { if (pass(p, c)) out.push([p, c]); }); });
       if (st.sort === "low") out.sort(function (x, y) { return fromPrice(x[0]) - fromPrice(y[0]); });
       else if (st.sort === "high") out.sort(function (x, y) { return fromPrice(y[0]) - fromPrice(x[0]); });
       else if (st.sort === "name") out.sort(function (x, y) { return x[0].name.localeCompare(y[0].name); });
-      var cnt = $("#count"); if (cnt) cnt.textContent = out.length + (out.length === 1 ? " product" : " products");
-      var sb = $("#stockf"); if (sb) sb.classList.toggle("on", st.stock);
-      list.innerHTML = out.map(function (x) { return prodCard(x[0], x[1]); }).join("") || '<div class="empty">No results found.</div>';
+      qs("count").textContent = out.length + (out.length === 1 ? " product" : " products");
+      var ch = [];
+      if (st.q) ch.push(["q", "“" + st.q + "”"]); if (st.stock) ch.push(["stock", "In stock"]); if (st.instant) ch.push(["instant", "Instant"]);
+      if (st.pre) ch.push(["pre", "Pre-order"]); if (st.min !== "") ch.push(["min", "≥ $" + st.min]); if (st.max !== "") ch.push(["max", "≤ $" + st.max]);
+      qs("achips").innerHTML = ch.map(function (x) { return '<button class="achip" data-x="' + x[0] + '">' + esc(x[1]) + " ×</button>"; }).join("");
+      list.innerHTML = out.map(function (x) { return prodCard(x[0], x[1]); }).join("") ||
+        '<div class="empty">No products match these filters.<br><button class="btn btn-ghost btn-sm" data-reset="1" style="margin-top:12px">Reset filters</button></div>';
+      sync();
     };
-    list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+    list.innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
     var refresh = function () { return load().then(render); };
     refresh().catch(function () { list.innerHTML = '<div class="empty">Could not load the catalog.</div>'; });
-    setInterval(function () { if (!document.querySelector(".overlay")) refresh().catch(function () {}); }, 30000);
-    $("#tabs").addEventListener("click", function (e) { var t = e.target.closest("[data-c]"); if (t) { st.cat = t.dataset.c; render(); } });
-    $("#sort").addEventListener("change", function (e) { st.sort = e.target.value; render(); });
-    $("#stockf").addEventListener("click", function () { st.stock = !st.stock; render(); });
-    $("#q").addEventListener("input", function (e) { st.q = e.target.value.trim().toLowerCase(); render(); });
+    setInterval(function () { if (!document.querySelector(".overlay") && document.visibilityState === "visible") refresh().catch(function () {}); }, 30000);
+    var pick = function (e) { var t = e.target.closest("[data-c]"); if (t) { st.cat = t.dataset.c; render(); } };
+    qs("tabs").addEventListener("click", pick); qs("cats-list").addEventListener("click", pick);
+    qs("sort").addEventListener("change", function (e) { st.sort = e.target.value; ls("vs_sort", st.sort); render(); });
+    qs("q").addEventListener("input", function (e) { st.q = e.target.value.trim().toLowerCase(); render(); });
+    [["pmin", "min"], ["pmax", "max"]].forEach(function (x) { qs(x[0]).addEventListener("input", function (e) { st[x[1]] = e.target.value; render(); }); });
+    [["f-stock", "stock"], ["f-instant", "instant"], ["f-pre", "pre"]].forEach(function (x) { qs(x[0]).addEventListener("change", function (e) { st[x[1]] = e.target.checked; render(); }); });
+    document.querySelector(".vtoggle").addEventListener("click", function (e) { var b = e.target.closest("[data-v]"); if (b) { st.view = b.dataset.v; ls("vs_view", st.view); sync(); } });
+    qs("ftoggle").addEventListener("click", function () { qs("filters").classList.toggle("open"); });
+    var reset = function () { var keep = { sort: st.sort, view: st.view }; st = Object.assign({}, base, keep, { cat: "all" }); render(); };
+    qs("reset").addEventListener("click", reset);
+    document.addEventListener("click", function (e) {
+      if (e.target.closest("[data-reset]")) reset();
+      var a = e.target.closest("[data-x]"); if (a) { var k = a.dataset.x; st[k] = (k === "stock" || k === "instant" || k === "pre") ? false : ""; render(); }
+    });
   }
 })();
